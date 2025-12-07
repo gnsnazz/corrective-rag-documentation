@@ -1,13 +1,44 @@
+# --- ENVIRONMENT ---
 .venv/
-.env
-.DS_Store
-Thumbs.db
-.idea/
+venv/
+env/
+ENV/
+*.env
+
+# --- PYTHON ---
 __pycache__/
 *.pyc
-venv/
+*.py[cod]
+*.pyo
+*.pyd
+
+# --- IDE / PYCHARM ---
+.idea/
+.vscode/
+
+# --- SYSTEM FILES ---
+.DS_Store
+Thumbs.db
+
+# --- LOGS ---
+*.log
+
+# --- LOCAL DATA ---
+data/
+vectorstore/
+data/vectorstore/
+data/documents/
+
+# --- MODELS / EMBEDDINGS ---
+*.bin
+*.ckpt
+*.pt
+
+# --- PDF / DOCS
 *.pdf
 *.docx
-*.log
-vectorstore/
-data/
+
+# --- TEMP FILES ---
+*.tmp
+*.swp
+*.swo
