@@ -1,0 +1,13 @@
+.venv/
+.env
+.DS_Store
+Thumbs.db
+.idea/
+__pycache__/
+*.pyc
+venv/
+*.pdf
+*.docx
+*.log
+vectorstore/
+data/
