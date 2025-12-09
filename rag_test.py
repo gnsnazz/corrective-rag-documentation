@@ -2,10 +2,9 @@ import os
 from langchain_chroma import Chroma
 from langchain_ollama import OllamaLLM
 from app.embeddings import get_embedding_model
-from app.config import OLLAMA_MODEL
+from app.config import OLLAMA_MODEL, DB_DIR
 
 # Configurazione Path
-DB_DIR = "data/vectorstore/sklearn_md"
 
 TEST_QUERY = "Where is the latest contributing guide available online according to the context?"
 

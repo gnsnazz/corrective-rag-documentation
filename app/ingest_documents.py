@@ -5,10 +5,9 @@ from langchain_text_splitters import MarkdownTextSplitter
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import TextLoader
 from embeddings import get_embedding_model
+from config import REPO_PATH, DB_DIR
 
-REPO_PATH = "data/sklearn_repo"        # directory della repository
-DB_DIR = "data/vectorstore/sklearn_md" # vector store di output
-FILE_EXTENSIONS = [".md"]              # markdown
+FILE_EXTENSIONS = [".md"]   # solo file markdown per ora
 
 def load_markdown_files(repo_path: str):
     """
