@@ -1,13 +1,25 @@
-from langchain_ollama import ChatOllama
-from app.config import OLLAMA_MODEL
+from app.crag.graph import build_crag_graph
 
 def main():
-    llm = ChatOllama(
-        model=OLLAMA_MODEL,
-        temperature=0.0
-    )
+    print("Avvio CRAG...")
 
-    print(llm.invoke("Test modello"))
+    app = build_crag_graph()
+
+    # testing query
+    query = "What are the brand guidelines for the logo?"
+
+    print(f"\nDomanda Utente: {query}")
+    print("-" * 40)
+
+    inputs = {"question": query}
+
+    result = app.invoke(inputs)
+
+    # risultato
+    print("\n" + "=" * 40)
+    print("🤖 RISPOSTA GENERATA:")
+    print("=" * 40)
+    print(result.get("generation", "Nessuna risposta generata."))
 
 if __name__ == "__main__":
     main()
