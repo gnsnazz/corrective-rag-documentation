@@ -1,11 +1,13 @@
-from langchain_ollama import OllamaLLM
+from langchain_ollama import ChatOllama
 from app.config import OLLAMA_MODEL
 
 def main():
-    llm = OllamaLLM(model=OLLAMA_MODEL)
+    llm = ChatOllama(
+        model=OLLAMA_MODEL,
+        temperature=0.0
+    )
 
-    response = llm.invoke("Test modello")
-    print(response)
+    print(llm.invoke("Test modello"))
 
 if __name__ == "__main__":
     main()

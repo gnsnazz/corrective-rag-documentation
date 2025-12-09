@@ -1,4 +1,6 @@
+import os
 from dotenv import load_dotenv
 
 load_dotenv()
-OLLAMA_MODEL = "llama3.1"
+
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1")
