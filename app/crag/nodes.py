@@ -2,14 +2,14 @@ import os
 from langchain_chroma import Chroma
 from langchain_ollama import OllamaLLM
 from langchain_core.prompts import PromptTemplate
-from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.output_parsers import StrOutputParser
 
 from app.embeddings import get_embedding_model
 from app.config import OLLAMA_MODEL, DB_DIR
 from app.crag.state import GraphState
 
 # Modello locale
-local_llm = OllamaLLM(model=OLLAMA_MODEL, temperature=0, format="json")
+local_llm = OllamaLLM(model=OLLAMA_MODEL, temperature=0)
 
 # Vector Store
 if not os.path.exists(DB_DIR):
@@ -34,35 +34,29 @@ def grade_documents(state: GraphState):
     question = state["question"]
     documents = state["documents"]
 
-    # Parser JSON per Llama
-    parser = JsonOutputParser()
-
     prompt = PromptTemplate(
         template="""You are a grader assessing relevance of a retrieved document to a user question.
         Document: {document}
         User Question: {question}
 
         If the document contains keyword(s) or semantic meaning related to the question, grade it as relevant.
-        Give a binary score 'yes' or 'no' score to indicate whether the document is relevant to the question.
-
-        Provide the binary score as a JSON with a single key 'score' and no preamble.
-        Example: {{ "score": "yes" }}
-        """,
+        Give a binary score 'yes' or 'no' score to indicate whether the document is relevant to the question.""",
         input_variables=["question", "document"],
     )
 
-    chain = prompt | local_llm | parser
+    chain = prompt | local_llm | StrOutputParser()
 
     filtered_docs = []
     for d in documents:
         try:
             score_data = chain.invoke({"question": question, "document": d.page_content})
-            if score_data.get("score") == "yes":
+            if "yes" in score_data:
                 print(f"   Rilevante: {d.metadata.get('source')}")
                 filtered_docs.append(d)
             else:
-                print(f"   Irrilevante")
-        except:
+                print(f"   Irrilevante (Score: {score_data})")
+        except Exception as e:
+            print(f"    Errore grading: {e}")
             continue
 
     search_needed = len(filtered_docs) == 0
