@@ -6,7 +6,6 @@ from langchain_chroma import Chroma
 from langchain_community.document_loaders import TextLoader
 from embeddings import get_embedding_model
 
-# === CONFIG ===
 REPO_PATH = "data/sklearn_repo"        # directory della repository
 DB_DIR = "data/vectorstore/sklearn_md" # vector store di output
 FILE_EXTENSIONS = [".md"]              # markdown
@@ -23,7 +22,7 @@ def load_markdown_files(repo_path: str):
 
             if ext in FILE_EXTENSIONS:
                 full_path = os.path.join(root, file)
-                print(f"📄 Carico: {full_path}")
+                print(f"Carico: {full_path}")
 
                 loader = TextLoader(full_path, encoding="utf-8")
                 loaded_docs = loader.load()
@@ -67,7 +66,7 @@ def ingest_repository(repo_path: str = REPO_PATH, db_dir: str = DB_DIR):
     print(f"   → {len(chunks)} chunk generati\n")
 
     # 3. Embeddings MiniLM
-    print("🧠 Creo embeddings (MiniLM)...")
+    print("Creo embeddings (MiniLM)...")
     embeddings = get_embedding_model()
 
     # 4. Salva in vectorstore
