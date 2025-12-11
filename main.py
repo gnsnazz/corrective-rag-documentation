@@ -6,7 +6,15 @@ def main():
     app = build_crag_graph()
 
     # testing query
-    query = "What are the brand guidelines for the logo?"
+    # sklearn_repo
+    #query = "How do I implement a Support Vector Machine (SVM)?"
+
+    # transformers_repo - positive test
+    #query = "How do i use the pipeline function for text classification?"
+    #query = "What is the BERT model and how is it pre-trained?"
+
+    # transformers_repo - negative test
+    query = "How do I cook a carbonara with guanciale?"
 
     print(f"\nDomanda Utente: {query}")
     print("-" * 40)
@@ -17,7 +25,7 @@ def main():
 
     # risultato
     print("\n" + "=" * 40)
-    print("🤖 RISPOSTA GENERATA:")
+    print("RISPOSTA GENERATA:")
     print("=" * 40)
     print(result.get("generation", "Nessuna risposta generata."))
 
