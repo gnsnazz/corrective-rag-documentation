@@ -50,7 +50,7 @@ def grade_documents(state: GraphState):
     for d in documents:
         try:
             score_data = chain.invoke({"question": question, "document": d.page_content})
-            if "yes" in score_data:
+            if "yes" in score_data.lower():
                 print(f"   Rilevante: {d.metadata.get('source')}")
                 filtered_docs.append(d)
             else:
