@@ -30,31 +30,84 @@ def retrieve(state: GraphState):
 
 
 def grade_documents(state: GraphState):
-    print("--- 2. GRADE DOCUMENTS (Evaluator) ---")
+    """
+    Implementazione Corrective-RAG:
+    Classifica in Correct, Ambiguous, Incorrect.
+    Esegue Knowledge Refinement sui documenti ambigui.
+    """
+    print("--- 2. EVALUATOR & REFINEMENT ---")
     question = state["question"]
     documents = state["documents"]
 
-    prompt = PromptTemplate(
-        template="""You are a grader assessing relevance of a retrieved document to a user question.
-        Document: {document}
-        User Question: {question}
-
-        If the document contains keyword(s) or semantic meaning related to the question, grade it as relevant.
-        Give a binary score 'yes' or 'no' score to indicate whether the document is relevant to the question.""",
+    # prompt valutazione
+    eval_prompt = PromptTemplate(
+        template="""You are a hyper-strict Evaluator.
+        
+            Your Goal: Determine if the document contains TECHNICAL information to answer the question.
+        
+            Rules for classification:
+            1. 'correct': ONLY if the document explicitly defines the specific concept in the question.
+            2. 'incorrect': If the document is unrelated.
+            3. 'ambiguous': If the document mentions the keywords (e.g. in code or lists) but does NOT provide a full textual explanation.
+        
+            MOST IMPORTANT: If you are unsure, choose 'ambiguous'.
+        
+            Document: {document}
+            Question: {question}
+        
+            Return ONLY one word: 'correct', 'incorrect', or 'ambiguous'.""",
         input_variables=["question", "document"],
     )
 
-    chain = prompt | local_llm | StrOutputParser()
+    # prompt raffinamento - caso ambiguous
+    refine_prompt = PromptTemplate(
+        template="""You are performing Knowledge Refinement for a RAG system.
+        The following document was retrieved for the question but is ambiguous.
+        
+        Task: Extract ONLY the sentences from the document that directly answer the question.
+        
+        STRICT RULES:
+        1. Do NOT add any information from your own knowledge.
+        2. Use ONLY the text provided below.
+        3. If the document does not contain the specific answer, return EXACTLY the word "IRRELEVANT".
+        
+        Document: {document}
+        Question: {question}
+        
+        Refined Content:""",
+        input_variables=["question", "document"]
+    )
+
+    eval_chain = eval_prompt | local_llm | StrOutputParser()
+    refine_chain = refine_prompt | local_llm | StrOutputParser()
 
     filtered_docs = []
     for d in documents:
         try:
-            score_data = chain.invoke({"question": question, "document": d.page_content})
-            if "yes" in score_data.lower():
-                print(f"   Rilevante: {d.metadata.get('source', 'unknown')}")
+            score = eval_chain.invoke({"question": question, "document": d.page_content})
+            score = score.strip().lower()
+
+            if "correct" in score:
+                print(f"   CORRECT: {d.metadata.get('source', 'unknown')}")
                 filtered_docs.append(d)
+            elif "ambiguous" in score:
+                print(f"  AMBIGUOUS: {d.metadata.get('source', 'unknown')} -> Avvio Refinement...")
+
+                # B. Knowledge Refinement
+                refined_content = refine_chain.invoke({"question": question, "document": d.page_content})
+
+                if "IRRELEVANT" in refined_content:
+                    print(f"   Refinement fallito: Info non trovata nel testo. Scartato.")
+                else:
+                    # Aggiorna il contenuto del documento con la versione pulita
+                    d.page_content = refined_content
+                    # Aggiunge un tag metadata per tracciare che è stato modificato
+                    d.metadata["is_refined"] = True
+                    print(f"    Refined (Knowledge Strip done)")
+                    filtered_docs.append(d)
             else:
-                print(f"   Irrilevante (Score: {score_data})")
+                # Incorrect
+                print(f"   INCORRECT (Scartato)")
         except Exception as e:
             print(f"    Errore grading: {e}")
             continue
@@ -69,25 +122,19 @@ def generate(state: GraphState):
     documents = state["documents"]
 
     if state["search_needed"] or not documents:
-        return {"generation": "Mi dispiace, non ho trovato informazioni rilevanti nei documenti locali."}
+        return {"generation": "NESSUNA_DOC: Informazioni insufficienti (Tutti i documenti scartati come 'Incorrect')."}
 
     context = "\n\n".join([d.page_content for d in documents])
 
     prompt = PromptTemplate(
-        template="""You are an expert Technical Writer.
-            Write a comprehensive documentation section for the topic below based ONLY on the context.
-
-            Rules:
-            1. Use Markdown format (## Headers, ```code blocks```, - lists).
-            2. Be professional and concise.
-            3. Include code examples if present in context.
-
-            Topic: {question}
-
-            Context:
-            {context}
-
-            Documentation Content:""",
+        template="""You are a Technical Writer. Write documentation based on the context.
+        If the context contains 'refined' knowledge, integrate it smoothly.
+        
+        Topic: {question}
+        Context:
+        {context}
+        
+        Documentation (Markdown):""",
         input_variables=["question", "context"]
     )
 
