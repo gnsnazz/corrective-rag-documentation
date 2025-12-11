@@ -17,7 +17,7 @@ if not os.path.exists(DB_DIR):
 
 embeddings = get_embedding_model()
 vectorstore = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
-retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
+retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
 
 # --- NODI ---
 
@@ -51,7 +51,7 @@ def grade_documents(state: GraphState):
         try:
             score_data = chain.invoke({"question": question, "document": d.page_content})
             if "yes" in score_data.lower():
-                print(f"   Rilevante: {d.metadata.get('source')}")
+                print(f"   Rilevante: {d.metadata.get('source', 'unknown')}")
                 filtered_docs.append(d)
             else:
                 print(f"   Irrilevante (Score: {score_data})")
@@ -74,11 +74,20 @@ def generate(state: GraphState):
     context = "\n\n".join([d.page_content for d in documents])
 
     prompt = PromptTemplate(
-        template="""Answer the question based only on the following context:
-        {context}
+        template="""You are an expert Technical Writer.
+            Write a comprehensive documentation section for the topic below based ONLY on the context.
 
-        Question: {question}
-        Answer:""",
+            Rules:
+            1. Use Markdown format (## Headers, ```code blocks```, - lists).
+            2. Be professional and concise.
+            3. Include code examples if present in context.
+
+            Topic: {question}
+
+            Context:
+            {context}
+
+            Documentation Content:""",
         input_variables=["question", "context"]
     )
 
@@ -89,4 +98,4 @@ def generate(state: GraphState):
     if isinstance(response, dict):
         response = str(response)
 
-    return {"generation": response}
+    return {"generation": str(response)}
