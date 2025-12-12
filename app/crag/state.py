@@ -9,3 +9,4 @@ class GraphState(TypedDict):
     generation: str
     documents: List[Document]
     search_needed: bool # after, if needed
+    loop_step: int
