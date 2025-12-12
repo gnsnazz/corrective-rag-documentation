@@ -9,21 +9,14 @@ def main():
     print("   TEST GENERAZIONE DOC    ")
     print("-" * 30)
 
-    # testing query - sklearn_repo
-    #query = "How do I implement a Support Vector Machine (SVM)?"
-
-    # transformers_repo - positive test
-    #query = "How do i use the pipeline function for text classification?"
-    #query = "What is the BERT model and how is it pre-trained?"
-
-    # transformers_repo - negative test
-    #query = "How do I cook a carbonara with guanciale?"
-    #query = "How do I use a PreTrainedTokenizer to prepare text for a model?"
-
     topics = [
+        #"How do I use the pipeline function for text classification?"
         #"How to use the Trainer API for fine-tuning",
-        #"What are the supported optimizers?",
-        "Explain the Tokenizer architecture"
+        #"Explain the Tokenizer architecture",
+        #"What is the pipeline abstraction?",
+        "What is the default dropout rate in BertConfig?",
+        #"How to use the pipeline for sentiment analysis?"
+        #"How do I cook a carbonara with guanciale?"
     ]
 
     for topic in topics:
@@ -39,7 +32,7 @@ def main():
             print(f" Documentazione salvata in: {path}")
 
             # Anteprima
-            print("\n💡 ANTEPRIMA CONTENUTO GENERATO:")
+            print("\n   ANTEPRIMA CONTENUTO GENERATO:")
             print("." * 40)
             print(content)
             print("." * 40)
