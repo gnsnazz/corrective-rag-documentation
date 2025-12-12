@@ -42,3 +42,8 @@ data/documents/
 *.tmp
 *.swp
 *.swo
+
+# --- GENERATED FILES ---
+output_docs/
+*.md
+!README.md
