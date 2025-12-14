@@ -1,27 +1,39 @@
 from langgraph.graph import END, StateGraph
 from app.crag.state import GraphState
-from app.crag.nodes import retrieve, grade_documents, generate, transform_query
+from app.crag.nodes import (
+    retrieve,
+    grade_documents,
+    transform_query,
+    corrective_retriever,
+    generate,
+    CONFIDENCE_THRESHOLD,
+    MAX_RETRIES
+)
 
-def decide_next_node(state):
+def decide_next_node(state: GraphState):
     """
-    Decide se generare o riscrivere, con un limite di tentativi.
+    Logica di Routing CRAG:
+    - High confidence -> answer
+    - Low confidence -> rewrite ONLY if ci sono documenti
+    - Max retries -> answer (best-effort)
     """
-    loop_step = state.get("loop_step", 0)
-    max_retries = 1
+    confidence = state.confidence_score
+    retries = state.retry_count
 
-    if state["search_needed"]:
-        if loop_step > max_retries:
-            print(f"  Max retries ({max_retries}) raggiunti.")
-            # genera
-            return "generate"
-
-        # altrimenti riscrivi e riprova
-        else:
-            print(f"  Search needed (Tentativo {loop_step + 1}/{max_retries + 1}) -> Rewrite")
-            return "transform_query"
-    else:
-        print("  Documents found -> Generate")
+    # 1: Confidenza alta (abbastanza doc Correct/Refined)
+    if confidence >= CONFIDENCE_THRESHOLD:
+        print(f"  Confidence High ({confidence:.2f}) -> Generating Answer")
         return "generate"
+
+    # 2: Confidenza bassa, retry
+    if retries < MAX_RETRIES:
+        print(f"  Confidence Low ({confidence:.2f}) -> Corrective Search needed")
+        return "transform_query"
+
+    # 3: Confidenza bassa, tentativi finiti -> Genera con quello che abbiamo
+    print(f"  Max Retries Reached ({retries}) -> Generating Best-Effort Answer")
+    return "generate"
+
 
 def build_crag_graph():
     """
@@ -29,28 +41,33 @@ def build_crag_graph():
     """
     workflow = StateGraph(GraphState)
 
-    # Aggiunge i nodi
+    # Add Nodes
     workflow.add_node("retrieve", retrieve)
     workflow.add_node("grade_documents", grade_documents)
-    workflow.add_node("generate", generate)
     workflow.add_node("transform_query", transform_query)
+    workflow.add_node("corrective_retriever", corrective_retriever)
+    workflow.add_node("generate", generate)
 
-    # Definisce le connessioni (Edges)
+    # Define Flow
     workflow.set_entry_point("retrieve")
     workflow.add_edge("retrieve", "grade_documents")
 
+    # Conditional Edge
     workflow.add_conditional_edges(
         "grade_documents",
         decide_next_node,
         {
-            "transform_query": "transform_query",
             "generate": "generate",
+            "transform_query": "transform_query"
         }
     )
 
-    workflow.add_edge("transform_query", "retrieve")
+    # Loop Correttivo
+    workflow.add_edge("transform_query", "corrective_retriever")
+    # I nuovi documenti correttivi devono essere valutati!
+    workflow.add_edge("corrective_retriever", "grade_documents")
+
+    # Exit
     workflow.add_edge("generate", END)
 
-    # Compila
-    app = workflow.compile()
-    return app
+    return workflow.compile()
