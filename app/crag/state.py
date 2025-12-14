@@ -1,12 +1,35 @@
-from typing import List, TypedDict
-from langchain_core.documents import Document
+from typing import List, Literal, Optional
+from pydantic import BaseModel, Field
 
-class GraphState(TypedDict):
+RelevanceType = Literal["correct", "ambiguous", "incorrect", "refined", "unknown"]
+RetrievalType = Literal["base", "corrective"]
+
+class CragDocument(BaseModel):
+    """
+    Rappresentazione unificata del documento nel grafo.
+    """
+    page_content: str
+    metadata: dict
+    relevance_score: RelevanceType = "unknown"
+    retrieval_source: RetrievalType = "base"
+
+class GraphState(BaseModel):
     """
     Rappresenta lo stato del grafo CRAG.
     """
     question: str
-    generation: str
-    documents: List[Document]
-    search_needed: bool # after, if needed
-    loop_step: int
+    generation: Optional[str] = None
+    # Documenti attualmente sotto esame (batch corrente)
+    documents: List[CragDocument] = Field(default_factory = list)
+    # Accumulatore di documenti validi (Correct + Refined) pronti per la generazione
+    #final_documents: List[CragDocument] = Field(default_factory=list)
+    k_in: List[CragDocument] = Field(default_factory = list)  # correct + refined (Knowledge Interna)
+    k_ex: List[CragDocument] = Field(default_factory = list)  # corrective research (Knowledge Esterna/Correttiva)
+
+    # Metriche di controllo
+    #confidence_score: Optional[float] = None
+    confidence_score: float = 0.0
+    retry_count: int = 0
+
+    # Memoria per evitare loop di riscrittura identici
+    previous_queries: List[str] = Field(default_factory = list)
