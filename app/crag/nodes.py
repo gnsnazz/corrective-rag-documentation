@@ -1,26 +1,38 @@
 import os
 from langchain_chroma import Chroma
 from langchain_anthropic import ChatAnthropic
-from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from pydantic import BaseModel, Field
+from typing import Literal
 
 from app.embeddings import get_embedding_model
 from app.config import DB_DIR
-from app.crag.state import GraphState
+from app.crag.state import GraphState, CragDocument
+
+from app.crag.prompts import (
+    GRADER_SYSTEM_MSG,
+    refine_prompt,
+    rewrite_prompt,
+    generate_prompt
+)
 
 # Modello locale
 llm = ChatAnthropic(
-    model_name = "claude-3-haiku-20240307",
+    model_name = "claude-haiku-4-5-20251001", #claude-sonnet-4-5-20250929
     temperature = 0,
-    timeout=None,
-    stop=None,
-    max_retries=2
+    timeout = None,
+    stop = None,
+    max_retries = 2
 )
 
+# (dopo) usare sonnet-4-5 per la generazione
+
 class Grade(BaseModel):
-    """Binary score for relevance check."""
-    score: str = Field(description="Must be 'yes' if the document is technically relevant, 'no' if irrelevant.")
+    """Score for relevance check."""
+    score: Literal["correct", "ambiguous", "incorrect"] = Field(
+        description = """Relevance classification: 'correct' (explicit answer), 'ambiguous' (needs refinement),
+         or 'incorrect' (irrelevant)."""
+    )
 
 # Grader strutturato
 llm_grader = llm.with_structured_output(Grade)
@@ -33,15 +45,35 @@ embeddings = get_embedding_model()
 vectorstore = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
 retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
 
-# --- NODI ---
+# Parametri CRAG
+CONFIDENCE_THRESHOLD = 0.5  # Se < 50% dei docs sono validi -> Corrective Search
+MAX_RETRIES = 1             # Numero di cicli correttivi
+K_CORRECTIVE = 10           # Documenti giro correttivo
 
+# --- NODI ---
 def retrieve(state: GraphState):
-    print("\n--- 1. RETRIEVE ---")
-    question = state["question"]
-    documents = retriever.invoke(question)
-    loop_step = state.get("loop_step", 0)
-    print(f"   Recuperati {len(documents)} documenti.")
-    return {"documents": documents, "question": question, "loop_step": loop_step}
+    print("\n   [1] BASE RETRIEVER")
+    # Recupero iniziale
+    raw_docs = retriever.invoke(state.question)
+
+    # Wrapping in CragDocument con metadata
+    crag_docs = [
+        CragDocument(
+            page_content = d.page_content,
+            metadata = d.metadata,
+            relevance_score = "unknown",
+            retrieval_source = "base"
+        )
+        for d in raw_docs
+    ]
+
+    return {
+        "documents": crag_docs,
+        "k_in": [],     # Reset liste
+        "k_ex": [],
+        "confidence_score": 0.0,
+        "previous_queries": [state.question]  # Inizializza memoria
+    }
 
 
 def grade_documents(state: GraphState):
@@ -50,113 +82,151 @@ def grade_documents(state: GraphState):
     Classifica in Correct, Ambiguous, Incorrect.
     Esegue Knowledge Refinement sui documenti ambigui.
     """
-    print("--- 2. EVALUATOR & REFINEMENT ---")
-    question = state["question"]
-    documents = state["documents"]
+    print("\n   [2] EVIDENCE SCORER")
 
-    # prompt valutazione
-    system_msg = """You are a strict technical evaluator. 
-        Check if the document contains TECHNICAL instructions to answer the user question.
+    current_valid_docs = []
+    total_docs_in_batch = len(state.documents)
+    valid_count = 0  # Conta sia 'correct' che 'refined'
 
-        Rules:
-        1. Score 'yes' ONLY if the document explains the technical concept.
-        2. Score 'no' if the document mentions keywords only in linguistic examples.
-        3. Score 'no' if the document is unrelated.
-        
-        Output MUST match the format description ('yes' or 'no')."""
+    refine_chain = refine_prompt | llm | StrOutputParser()
 
-    filtered_docs = []
-    for d in documents:
-        try:
-            grade_result = llm_grader.invoke([
-                ("system", system_msg),
-                ("user", f"Question: {question}\nDocument Snippet: {d.page_content}")
-            ])
+    for doc in state.documents:
+        # 1. EVALUATION (LLM Grader)
+        grade = llm_grader.invoke([
+            ("system", GRADER_SYSTEM_MSG),
+            ("user", f"Question: {state.question}\nDoc Snippet: {doc.page_content}")
+        ])
+        score = grade.score.lower()
 
-            if grade_result.score.lower() == "yes":
-                print(f"   Rilevante: {d.metadata.get('source', 'unknown')}")
-                filtered_docs.append(d)
+        # 2. LOGICA
+        if score == "correct":
+            print(f"  Correct: {doc.metadata.get('source')}")
+            doc.relevance_score = "correct"
+            current_valid_docs.append(doc)
+            valid_count += 1
+
+        elif score == "ambiguous":
+            print(f"  Ambiguous -> Refining...{doc.metadata.get('source')}")
+            # 3. KNOWLEDGE REFINEMENT
+            refined_text = refine_chain.invoke({"question": state.question, "document": doc.page_content})
+
+            if "IRRELEVANT" not in refined_text and len(refined_text) > 20:
+                print(f"    Refined Success")
+                doc.page_content = refined_text
+                doc.relevance_score = "refined"  # Contrassegnato come raffinato
+                current_valid_docs.append(doc)
+                valid_count += 1  # Conta per la confidenza
             else:
-                print(f"  SCARTATO (Irrilevante)")
+                print(f"    Refinement Failed (Irrelevant)")
+                doc.relevance_score = "incorrect"
+        else:
+            print(f"  Incorrect {doc.metadata.get('source')}")
+            doc.relevance_score = "incorrect"
 
-        except Exception as e:
-            print(f"   Errore API: {e}")
-            continue
+    # Carica lo stato attuale
+    new_k_in = list(state.k_in)
+    new_k_ex = list(state.k_ex)
 
-    search_needed = len(filtered_docs) == 0
+    # Identifica le fonti che abbiamo gia' salvato in precedenza
+    existing_sources = {d.metadata.get("source") for d in new_k_in + new_k_ex}
 
-    return {
-        "documents": filtered_docs,
-        "question": question,
-        "search_needed": search_needed,
-        "loop_step": state.get("loop_step", 0)
-    }
+    for d in current_valid_docs:
+        source_path = d.metadata.get("source")
+
+        # Aggiunge solo se non esiste gia'
+        if source_path not in existing_sources:
+            source_type = getattr(d, "retrieval_source", None)
+            if source_type == "base":
+                # Internal Knowledge
+                new_k_in.append(d)
+            elif source_type == "corrective":
+                # External/Extended Knowledge
+                new_k_ex.append(d)
+
+            existing_sources.add(source_path)
+
+    # Calcola confidenza sul batch corrente
+    confidence = valid_count / total_docs_in_batch if total_docs_in_batch > 0 else 0.0
+    print(f"  Batch Confidence: {confidence:.2f} (Threshold: {CONFIDENCE_THRESHOLD})")
+    print(f"  Accumulated -> k_in: {len(new_k_in)} | k_ex: {len(new_k_ex)}")
+
+    return {"k_in": new_k_in, "k_ex": new_k_ex, "confidence_score": confidence}
 
 def transform_query(state: GraphState):
-    """
-    Trasforma la query.
-    Usato quando il Retrieval iniziale fallisce.
-    """
-    print("--- TRANSFORM QUERY (Rewriter) ---")
-    question = state["question"]
-    documents = state["documents"]
-    loop_step = state.get("loop_step", 0)
+    print("\n   [3] QUERY REWRITE")
 
-    # Prompt per riscrivere la domanda
-    prompt = PromptTemplate(
-        template="""You are an AI assistant optimizing queries for documentation retrieval.
-        The previous attempt failed.
-        
-        User Question: {question}
-        
-        Task: Re-phrase the question to be more technical and specific.
-        Return ONLY the rewritten question string.
-        New Question:""",
-        input_variables=["question"]
-    )
+    # Verifica anti-loop: conosce le query precedenti
+    history_str = "\n- ".join(state.previous_queries)
 
-    chain = prompt | llm | StrOutputParser()
-    better_question = chain.invoke({"question": question})
+    chain = rewrite_prompt | llm | StrOutputParser()
+    new_query = chain.invoke({"question": state.question, "history": history_str})
 
-    print(f"   Original: {question}")
-    print(f"   Rewritten: {better_question}")
+    print(f"  Rewritten: {new_query}")
 
-    # Aggiorna lo stato con la nuova domanda
-    return {"question": better_question, "documents": documents, "loop_step": loop_step + 1}
+    return {
+        "question": new_query,
+        "retry_count": state.retry_count + 1,
+        "previous_queries": state.previous_queries + [new_query]  # Aggiorna memoria
+    }
+
+def corrective_retriever(state: GraphState):
+    print("\n   [4] CORRECTIVE RETRIEVER")
+
+    # k leggermente più alto per cercare più a fondo
+    corrective = vectorstore.as_retriever(search_kwargs={"k": K_CORRECTIVE})
+
+    raw_docs = corrective.invoke(state.question)
+
+    crag_docs = [
+        CragDocument(
+            page_content = d.page_content,
+            metadata = d.metadata,
+            relevance_score = "unknown",
+            retrieval_source = "corrective"  # Traccia che viene dal fix
+        )
+        for d in raw_docs
+    ]
+
+    print(f"  Retrieved {len(crag_docs)} new docs.")
+    for d in crag_docs:
+        print(f"  New Doc: {d.metadata.get('source', 'unknown')}")  # test
+
+    # Lo scorer analizzerà SOLO quelli nuovi
+    return {"documents": crag_docs}
+
 
 def generate(state: GraphState):
-    print("--- 3. GENERATE ---")
-    question = state["question"]
-    documents = state["documents"]
+    """"
+    Genera la risposta finale (documento)
+    """
+    print("\n   [5] ANSWER GENERATOR")
 
-    if state["search_needed"] or not documents:
-        return {"generation": "NESSUNA_DOC: Informazioni insufficienti (Tutti i documenti scartati come 'Incorrect')."}
+    # Unione delle conoscenze per il generatore
+    k_in_docs = state.k_in
+    k_ex_docs = state.k_ex
+    all_docs = k_in_docs + k_ex_docs
 
-    context = "\n\n".join([d.page_content for d in documents])
+    # Controllo finale
+    if not all_docs:
+        return {"generation": "NESSUNA_DOC: Fallimento completo del retrieval (Base + Corrective)."}
 
-    prompt = PromptTemplate(
-        template="""You are a Technical Writer. 
-        Write a Markdown documentation based ONLY on the context provided.
-        
-        User Question: {question}
-        
-        Context Data (Documentation snippets):
-        {context}
-        
-        Instructions:
-        1. Focus on HOW to use the feature requested.
-        2. EXTRACT CODE SNIPPETS from the context if available.
-        3. Synthesize the information found in the documents.
-        5. Only return "NESSUNA_DOC" if the context is completely empty or unrelated.
-        
-        Documentation (Markdown):""",
-        input_variables=["question", "context"]
-    )
+    context_parts = []
 
-    chain = prompt | llm | StrOutputParser()
+    if k_in_docs:
+        context_parts.append("--- INTERNAL KNOWLEDGE ---")
+        context_parts.extend([d.page_content for d in k_in_docs])
 
-    try:
-        response = chain.invoke({"question": question, "context": context})
-        return {"generation": str(response)}
-    except Exception as e:
-        return {"generation": f"Errore generazione: {e}"}
+    if k_ex_docs:
+        context_parts.append("\n--- EXTENDED KNOWLEDGE ---")
+        context_parts.extend([d.page_content for d in k_ex_docs])
+
+    context = "\n\n".join(context_parts)
+
+    chain = generate_prompt | llm | StrOutputParser()   # (dopo) usare modello più potente (sonnet-4-5)
+    response = chain.invoke({
+        "context": context,
+        "question": state.question,
+        "len_docs": len(all_docs)
+    })
+
+    return {"generation": str(response)}
