@@ -9,33 +9,46 @@ def main():
     print("   TEST GENERAZIONE DOC    ")
     print("-" * 30)
 
-    topics = [
-        #"How do I use the pipeline function for text classification?"
-        #"How to use the Trainer API for fine-tuning",
-        #"Explain the Tokenizer architecture",
-        #"What is the pipeline abstraction?",
-        "What is the default dropout rate in BertConfig?",
-        #"How to use the pipeline for sentiment analysis?"
-        #"How do I cook a carbonara with guanciale?"
-    ]
+    # query tecnica corretta/valida
+    query = "How to initialize a pipeline for text classification in Transformers?"
+    #query = "How to load a pre-trained BERT model using from_pretrained?"
 
-    for topic in topics:
-        print(f"\n Generazione per: '{topic}'...")
+    # query ambigua
+    #query = "Explain BERT model architecture"
+    #query = "What is the default dropout rate in ALBERT?"
+    #query = "What is the architecture of BERT?"
+    #query = "How does T5 handle text-to-text tasks?"
 
-        result = app.invoke({"question": topic})
-        content = result["generation"]
+    # query non corretta
+    #query = "asdasd qweqwe transformers banana"
+    #query = "t5 model training arguments banana config"
 
-        if "NESSUNA_DOC" in content:
-            print("  Skip: Informazioni non trovate.")
-        else:
-            path = save_documentation(content, topic)
-            print(f" Documentazione salvata in: {path}")
+    # query breve
+    #query = "What is Trainer?"
 
-            # Anteprima
-            print("\n   ANTEPRIMA CONTENUTO GENERATO:")
-            print("." * 40)
-            print(content)
-            print("." * 40)
+    # query errata
+    #query = "How does the moon affect deep learning?"
+    #query = "How to use React Hooks?
+    #query = "How to cook carbonara with Transformers?"
+
+    print(f"\n Generazione per: '{query}'...")
+
+    # invoca il workflow CRAG
+    result = app.invoke({"question": query})
+    content = result.get("generation", "")
+
+    if not content or "NESSUNA_DOC" in content:
+        print("  Skip: Informazioni non trovate.")
+    else:
+        # Salva documentazione generata
+        path = save_documentation(content, query)
+        print(f"\n Documentazione salvata in: {path}")
+
+        # Anteprima contenuto
+        print("\n   ANTEPRIMA CONTENUTO GENERATO:")
+        print("." * 40)
+        print(content)
+        print("." * 40)
 
 if __name__ == "__main__":
     main()
