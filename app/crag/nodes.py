@@ -127,23 +127,14 @@ def grade_documents(state: GraphState):
     new_k_in = list(state.k_in)
     new_k_ex = list(state.k_ex)
 
-    # Identifica le fonti che abbiamo gia' salvato in precedenza
-    existing_sources = {d.metadata.get("source") for d in new_k_in + new_k_ex}
-
     for d in current_valid_docs:
-        source_path = d.metadata.get("source")
-
-        # Aggiunge solo se non esiste gia'
-        if source_path not in existing_sources:
-            source_type = getattr(d, "retrieval_source", None)
-            if source_type == "base":
-                # Internal Knowledge
-                new_k_in.append(d)
-            elif source_type == "corrective":
-                # External/Extended Knowledge
-                new_k_ex.append(d)
-
-            existing_sources.add(source_path)
+        source_type = getattr(d, "retrieval_source", None)
+        if source_type == "base":
+            # Internal Knowledge
+            new_k_in.append(d)
+        elif source_type == "corrective":
+            # External/Extended Knowledge
+            new_k_ex.append(d)
 
     # Calcola confidenza sul batch corrente
     confidence = valid_count / total_docs_in_batch if total_docs_in_batch > 0 else 0.0
