@@ -80,7 +80,9 @@ def grade_documents(state: GraphState):
     """
     Implementazione Corrective-RAG:
     Classifica in Correct, Ambiguous, Incorrect.
-    Esegue Knowledge Refinement sui documenti ambigui.
+    Knowledge Refinement applicato a tutti i documenti rilevanti (Correct & Ambiguous).
+    Knowledge Searching applicato ai documenti irrilevanti (Ambiguous & Incorrect).
+    Nessuna deduplicazione per fonte: accetta chunk multipli dallo stesso file.
     """
     print("\n   [2] EVIDENCE SCORER")
 
@@ -99,29 +101,37 @@ def grade_documents(state: GraphState):
         score = grade.score.lower()
 
         # 2. LOGICA
-        if score == "correct":
-            print(f"  Correct: {doc.metadata.get('source')}")
-            doc.relevance_score = "correct"
-            current_valid_docs.append(doc)
-            valid_count += 1
-
-        elif score == "ambiguous":
-            print(f"  Ambiguous -> Refining...{doc.metadata.get('source')}")
-            # 3. KNOWLEDGE REFINEMENT
-            refined_text = refine_chain.invoke({"question": state.question, "document": doc.page_content})
-
-            if "IRRELEVANT" not in refined_text and len(refined_text) > 20:
-                print(f"    Refined Success")
-                doc.page_content = refined_text
-                doc.relevance_score = "refined"  # Contrassegnato come raffinato
-                current_valid_docs.append(doc)
-                valid_count += 1  # Conta per la confidenza
-            else:
-                print(f"    Refinement Failed (Irrelevant)")
-                doc.relevance_score = "incorrect"
-        else:
-            print(f"  Incorrect {doc.metadata.get('source')}")
+        if score == "incorrect":
+            print(f"  Incorrect: {doc.metadata.get('source')}")
             doc.relevance_score = "incorrect"
+            continue  # Passa al prossimo documento
+
+        # 3. KNOWLEDGE REFINEMENT
+        # Il documento è 'correct' o 'ambiguous', applichiamo il Refinement per estrarre strip precisi.
+        print(f"  {score.capitalize()} -> Refining... {doc.metadata.get('source')}")
+
+        try:
+            refined_text = refine_chain.invoke({
+                "question": state.question,
+                "document": doc.page_content
+            })
+        except Exception as e:
+            print(f"    Error during refinement: {e}")
+            continue
+
+        # 4. VALIDAZIONE POST-REFINEMENT
+        # Accettiamo il documento solo se il Refiner ha estratto contenuto utile
+        if "IRRELEVANT" not in refined_text and len(refined_text) > 20:
+            print(f"    Refined Success")
+
+            # Sovrascrive il contenuto grezzo con quello pulito (Strip)
+            doc.page_content = refined_text
+            doc.relevance_score = "refined" # Contrassegnato come refined
+
+            current_valid_docs.append(doc)
+            valid_count += 1                # Conta per la confidence
+        else:
+            print(f"    Refinement Failed (Irrelevant)")
 
     # Carica lo stato attuale
     new_k_in = list(state.k_in)
