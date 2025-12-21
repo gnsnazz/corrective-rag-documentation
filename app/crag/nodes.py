@@ -42,7 +42,7 @@ if not os.path.exists(DB_DIR):
     raise FileNotFoundError(f"DB non trovato in {DB_DIR}")
 
 embeddings = get_embedding_model()
-vectorstore = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
+vectorstore = Chroma(persist_directory = DB_DIR, embedding_function = embeddings)
 retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
 
 # Parametri CRAG
@@ -174,7 +174,7 @@ def corrective_retriever(state: GraphState):
     print("\n   [4] CORRECTIVE RETRIEVER")
 
     # k leggermente più alto per cercare più a fondo
-    corrective = vectorstore.as_retriever(search_kwargs={"k": K_CORRECTIVE})
+    corrective = vectorstore.as_retriever(search_kwargs = {"k": K_CORRECTIVE})
 
     raw_docs = corrective.invoke(state.question)
 
@@ -215,19 +215,22 @@ def generate(state: GraphState):
 
     if k_in_docs:
         context_parts.append("--- INTERNAL KNOWLEDGE ---")
-        context_parts.extend([d.page_content for d in k_in_docs])
+        for d in k_in_docs:
+            safe_content = d.page_content.replace("<context>", "").replace("</context>", "")
+            context_parts.append(safe_content)
 
     if k_ex_docs:
         context_parts.append("\n--- EXTENDED KNOWLEDGE ---")
-        context_parts.extend([d.page_content for d in k_ex_docs])
+        for d in k_ex_docs:
+            safe_content = d.page_content.replace("<context>", "").replace("</context>", "")
+            context_parts.append(safe_content)
 
     context = "\n\n".join(context_parts)
 
     chain = generate_prompt | llm | StrOutputParser()   # (dopo) usare modello più potente (sonnet-4-5)
     response = chain.invoke({
         "context": context,
-        "question": state.question,
-        "len_docs": len(all_docs)
+        "question": state.question
     })
 
     return {"generation": str(response)}
