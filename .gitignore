@@ -47,3 +47,4 @@ data/documents/
 output_docs/
 *.md
 !README.md
+*.csv

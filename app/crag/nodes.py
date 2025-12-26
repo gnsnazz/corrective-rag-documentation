@@ -18,14 +18,13 @@ from app.crag.prompts import (
 
 # Modello locale
 llm = ChatAnthropic(
-    model_name = "claude-haiku-4-5-20251001", #claude-sonnet-4-5-20250929
+    model_name = "claude-sonnet-4-5-20250929",
     temperature = 0,
     timeout = None,
     stop = None,
     max_retries = 2
 )
 
-# (dopo) usare sonnet-4-5 per la generazione
 
 class Grade(BaseModel):
     """Score for relevance check."""
@@ -189,8 +188,6 @@ def corrective_retriever(state: GraphState):
     ]
 
     print(f"  Retrieved {len(crag_docs)} new docs.")
-    for d in crag_docs:
-        print(f"  New Doc: {d.metadata.get('source', 'unknown')}")  # test
 
     # Lo scorer analizzerà SOLO quelli nuovi
     return {"documents": crag_docs}
@@ -203,13 +200,15 @@ def generate(state: GraphState):
     print("\n   [5] ANSWER GENERATOR")
 
     # Unione delle conoscenze per il generatore
-    k_in_docs = state.k_in
-    k_ex_docs = state.k_ex
+    k_in_docs = getattr(state, "k_in", []) or []
+    k_ex_docs = getattr(state, "k_ex", []) or []
     all_docs = k_in_docs + k_ex_docs
 
     # Controllo finale
+    # Se il Grader (Evaluator) ha scartato tutto, non si delega all'LLM.
     if not all_docs:
-        return {"generation": "NESSUNA_DOC: Fallimento completo del retrieval (Base + Corrective)."}
+        print("   HARD STOP: Nessuna evidenza valida trovata -> Astensione.")
+        return {"generation": "NESSUNA_DOC"}
 
     context_parts = []
 
@@ -227,7 +226,7 @@ def generate(state: GraphState):
 
     context = "\n\n".join(context_parts)
 
-    chain = generate_prompt | llm | StrOutputParser()   # (dopo) usare modello più potente (sonnet-4-5)
+    chain = generate_prompt | llm | StrOutputParser()
     response = chain.invoke({
         "context": context,
         "question": state.question

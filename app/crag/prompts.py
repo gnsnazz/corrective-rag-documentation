@@ -1,22 +1,45 @@
 from langchain_core.prompts import PromptTemplate
 
 # --- 1. GRADER SYSTEM MESSAGE (Strict) ---
-GRADER_SYSTEM_MSG = """You are a strict technical evaluator.
-Classify the relevance of the document to the user question.
+GRADER_SYSTEM_MSG = """You are a strict technical evaluator acting as a firewall for a RAG system.
+Your job is to assess the relevance of a retrieved document to a user question.
 
-CRITERIA:
-1. 'correct': Contains explicit technical instructions that answer the question.
-2. 'ambiguous': Discusses the topic but is buried in logs, long conversations, or vague descriptions. NEEDS REFINEMENT.
-3. 'incorrect': Completely unrelated or irrelevant, keywords appear ONLY in linguistic translation examples.
+Classify the document into one of these three categories based on these STRICT abstract rules:
+
+1. 'correct': 
+   - The document contains EXPLICIT information, code, or documentation that directly answers the specific question.
+   - The **Subject/Entity** requested in the question matches exactly with the one described in the document.
+
+2. 'ambiguous': 
+   - The document discusses the **Correct Subject/Entity** requested, but the specific answer is not immediately obvious, is implicit, or requires synthesizing multiple parts.
+   - The document is relevant to the topic but might be noisy (e.g., logs, general discussions, or list of parameters).
+   - ACTION: These documents are valuable and should be passed to the Refiner.
+
+3. 'incorrect': 
+   - **ENTITY MISMATCH**: The user asks for 'Subject A', but the document describes 'Subject B'. Even if they belong to the same domain or category, if the specific identifier/name is different, it is INCORRECT.
+   - **IRRELEVANT**: The document is about a completely different topic.
+   - **NOISE**: The document contains no semantic content (e.g., only imports, license headers, or empty lists).
+
+IMPORTANT: 
+- Do not assume the user made a typo. 
+- If the specific Class/Function/Method name requested is not present, mark it as 'incorrect' (unless it is a generic conceptual question).
+- Precision is prioritized over recall.
 """
 
 # --- 2. REFINER PROMPT ---
 # Estrae solo la polpa dai documenti ambigui
-REFINE_TEMPLATE = """You are a Knowledge Refiner. The document is ambiguous or noisy.
-Extract ONLY the technical details answering the question: 
-"{question}"
+REFINE_TEMPLATE = """You are a Knowledge Refiner. 
+The user asked: "{question}"
 
-If nothing useful remains, return "IRRELEVANT".
+Your job is to extract RELEVANT technical content from the document snippet below.
+
+RULES:
+1. EXCLUDE NOISE: Remove conversational filler, headers, logs, or marketing fluff.
+2. EXTRACT EXACT MATCHES: If the document contains the answer, keep it.
+3. HANDLE CONCEPTS: If the document describes a concept SIMILAR or ALTERNATIVE to what the user asked
+(e.g., user asks for 'X' but doc talks about 'Y' which serves a similar purpose), KEEP IT. This helps the system explain the difference.
+4. If the document is completely unrelated (different topic), return "IRRELEVANT".
+
 Document Snippet:
 {document}"""
 
