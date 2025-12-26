@@ -10,7 +10,7 @@ def main():
     print("-" * 30)
 
     # query tecnica corretta/valida
-    query = "How to initialize a pipeline for text classification in Transformers?"
+    query = "How do I use the VideoEditor class to trim an mp4 file?"
     #query = "How to load a pre-trained BERT model using from_pretrained?"
 
     # query ambigua
