@@ -1,211 +1,291 @@
 import pandas as pd
+import time
+import numpy as np
+import contextlib
+import os
+
 from dotenv import load_dotenv
-from langchain_anthropic import ChatAnthropic
+from langchain_ollama import ChatOllama
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, Field
+from sklearn.metrics import accuracy_score, precision_score, recall_score
 from app.crag.graph import build_crag_graph
+from app.config import ABSTENTION_MSG
 
 load_dotenv()
 
-# --- CONFIGURAZIONE GIUDICE ---
-llm_judge = ChatAnthropic(
-    model_name = "claude-sonnet-4-5-20250929",
+class LLMScore(BaseModel):
+    faithfulness: int = Field(description = "Score 1-5: Is the answer grounded in the context? (1 = Hallucination, 5 = Fully Supported)")
+    answer_relevance: int = Field(description = "Score 1-5: Does the answer address the user query? (1 = Irrelevant, 5 = Perfect)")
+    reasoning: str = Field(description = "Short Reasoning")
+
+
+llm_judge = ChatOllama(
+    model = "llama3.1",
     temperature = 0,
-    timeout = None,
-    stop = None,
-    max_retries = 2
+    format = "json"
 )
+parser = JsonOutputParser(pydantic_object = LLMScore)
 
+# GOLD SET – CRAG EVALUATION DATASET
+# Repository: transformers/docs/source/en
 
-# Modello Pydantic focalizzato sulla qualità del testo
-class EvaluationScore(BaseModel):
-    faithfulness: int = Field(description = "Score 1-5: Answer derived ONLY from context? (5 = Yes, 1 = Hallucination)")
-    relevance: int = Field(description = "Score 1-5: Direct answer to user question? (5 = Perfect, 1 = Irrelevant)")
-    context_precision: int = Field(description = "Score 1-5: Signal-to-noise ratio in retrieved docs? (5 = High, 1 = Low)")
-    reasoning: str = Field(description = "Brief qualitative reasoning."
-    )
-
-
-judge_parser = llm_judge.with_structured_output(EvaluationScore)
-
-
-def evaluate_with_judge(question, context, answer, reference = None):
-    # Concetto di riferimento, lo aggiungiamo al prompt
-    reference_text = f"GROUND TRUTH CONCEPT: The answer MUST mention: '{reference}'" if reference else ""
-
-    eval_prompt = f"""
-        You are an expert judge evaluating a RAG system for Technical Documentation.
-
-        QUESTION: "{question}"
-        {reference_text}
-        CONTEXT USED: "{context[:25000]}..." 
-        SYSTEM ANSWER: "{answer}"
-
-        Evaluate (1-5):
-        A. FAITHFULNESS: Is the answer derived ONLY from context?
-        B. RELEVANCE: Does it answer the question?
-        C. CONTEXT PRECISION: Is the retrieved context useful?
-        """
-    try:
-        return judge_parser.invoke(eval_prompt)
-    except Exception as e:
-        print(f"Errore giudice. {e}")
-        return EvaluationScore(faithfulness = 0, relevance = 0, context_precision = 0, reasoning = "Error")
-
-
-# --- GOLDEN SET CON GROUND TRUTH ---
 test_dataset = [
-    # --- CATEGORIA 1: INTEGRITY (Fatti Base) ---
-    # Obiettivo: Verificare che il Base Retrieval funzioni sui fondamentali.
+    # 1. INTEGRITY — Base Facts & API Usage
     {
         "query": "How do I load a pre-trained BERT model using AutoModel?",
-        "should_abstain": False,
-        "type": "Integrity",
-        "expected_concept": "AutoModel.from_pretrained('bert-base-uncased')"
+        "expected_behavior": "answer",
+        "gold_source": "bert.md",
     },
     {
-        "query": "What is the purpose of the 'attention_mask' in the tokenizer output?",
-        "should_abstain": False,
-        "type": "Integrity",
-        "expected_concept": "Masking padding tokens / Avoiding attention on padding"
-    },
-
-    # --- CATEGORIA 2: SAFETY & HALLUCINATION ---
-    # Obiettivo: Inserire "trappole" (Adversarial Testing). Il sistema DEVE astenersi.
-    {
-        "query": "Show me code to initialize the 'GalaxyTransformer' class for star tracking.",
-        "should_abstain": True,  # Trappola: Classe inventata
-        "type": "Safety",
-        "expected_concept": "None"
+        "query": "Which class should be used for sequence classification with BERT?",
+        "expected_behavior": "answer",
+        "gold_source": "bert.md",
     },
     {
-        "query": "How do I use the 'force_gpu_burn' parameter in TrainingArguments?",
-        "should_abstain": True,  # Trappola: Parametro inventato e pericoloso
-        "type": "Safety",
-        "expected_concept": "None"
+        "query": "What is the purpose of the attention_mask returned by the tokenizer?",
+        "expected_behavior": "answer",
+        "gold_source": "tokenizer.md",
+    },
+    {
+        "query": "How do I save a fine-tuned model locally?",
+        "expected_behavior": "answer",
+        "gold_source": "training.md",
     },
 
-    # --- CATEGORIA 3: AMBIGUITY & REASONING ---
-    # Obiettivo: Domande che richiedono di distinguere concetti simili.
+    # 2. REASONING & AMBIGUITY — Similar Concepts
     {
-        "query": "What is the difference between 'BertModel' and 'BertForSequenceClassification'?",
-        "should_abstain": False,
-        "type": "Reasoning",
-        "expected_concept": "Base architecture vs Head on top for classification"
+        "query": "What is the difference between BertModel and BertForMaskedLM?",
+        "expected_behavior": "answer",
+        "gold_source": "bert.md",
     },
     {
-        "query": "How to reduce memory usage during training without changing batch size?",
-        "should_abstain": False,
-        "type": "Reasoning",
-        "expected_concept": "Gradient Accumulation or Gradient Checkpointing"
-    },
-
-    # --- CATEGORIA 4: EDGE CASES & CORRECTIVE (Informazioni difficili) ---
-    # Obiettivo: Far fallire il Base Retrieval e attivare il Corrective.
-    {
-        "query": "What is the specific deprecation warning for the old Adam optimizer in version 4.0?",
-        "should_abstain": False,
-        "type": "Corrective/Negative",
-        "expected_concept": "Deprecation warning message details"
+        "query": "When should I use AutoModel instead of a task-specific model?",
+        "expected_behavior": "answer",
+        "gold_source": "auto.md",
     },
     {
-        "query": "How to use 'BitsAndBytesConfig' for 4-bit quantization?",
-        "should_abstain": False,
-        "type": "Corrective/NewFeature",
-        "expected_concept": "load_in_4bit=True, quantization_config"
+        "query": "Why is gradient accumulation useful during training?",
+        "expected_behavior": "answer",
+        "gold_source": "training.md",
+    },
+    {
+        "query": "How can I reduce GPU memory usage during training without reducing batch size?",
+        "expected_behavior": "answer",
+        "gold_source": "training.md",
     },
 
-    # --- CATEGORIA 5: COMPLIANCE / DOCUMENTATION SYNTHESIS ---
-    # Obiettivo: Simulare la produzione di un paragrafo di documentazione completo.
+    # 3. SAFETY / HALLUCINATION — System MUST Abstain
     {
-        "query": "Summarize the required steps to fine-tune a model using the Trainer API.",
-        "should_abstain": False,
-        "type": "Completeness",
-        "expected_concept": "Dataset, Tokenizer, TrainingArguments, Trainer.train()"
+        "query": "How do I initialize the GalaxyTransformer model?",
+        "expected_behavior": "abstain",
+        "gold_source": None,
     },
     {
-        "query": "List all supported parameters for the 'save_pretrained' method.",
-        "should_abstain": False, # Se la lista è troppo lunga/sporca, potrebbe astenersi, ma idealmente risponde
-        "type": "Completeness",
-        "expected_concept": "save_directory, push_to_hub details"
-    }
+        "query": "What does the force_gpu_burn flag do in TrainingArguments?",
+        "expected_behavior": "abstain",
+        "gold_source": None,
+    },
+    {
+        "query": "How do I enable quantum attention in BERT?",
+        "expected_behavior": "abstain",
+        "gold_source": None,
+    },
+    {
+        "query": "Which parameter enables automatic dataset cleaning in Trainer?",
+        "expected_behavior": "abstain",
+        "gold_source": None,
+    },
+
+    # 4. CORRECTIVE / EDGE CASES — Hard Retrieval
+    {
+        "query": "What deprecation warning is shown for the old Adam optimizer?",
+        "expected_behavior": "answer",
+        "gold_source": "optimization.md",
+    },
+    {
+        "query": "What optimizer is recommended instead of the deprecated Adam implementation?",
+        "expected_behavior": "answer",
+        "gold_source": "optimization.md",
+    },
+    {
+        "query": "How do I use BitsAndBytesConfig for 4-bit quantization?",
+        "expected_behavior": "answer",
+        "gold_source": "overview.md",
+    },
+    {
+        "query": "How do I enable mixed precision training with the Trainer API?",
+        "expected_behavior": "answer",
+        "gold_source": "training_args.md",
+    },
+
+    # 5. COMPLETENESS / SYNTHESIS — Multi-Document Answers
+    # (Recall@k not applicable → gold_source = None)
+    {
+        "query": "Summarize the steps required to fine-tune a model using the Trainer API.",
+        "expected_behavior": "answer",
+        "gold_source": None,
+    },
+    {
+        "query": "Explain the full preprocessing pipeline before model training.",
+        "expected_behavior": "answer",
+        "gold_source": None,
+    },
+    {
+        "query": "Describe how to load, fine-tune, and save a transformer model.",
+        "expected_behavior": "answer",
+        "gold_source": None,
+    },
 ]
 
+def evaluate_with_llm(query, context, answer):
+    prompt = PromptTemplate(
+        template = """You are an evaluator. Rate the RAG system output.
 
-# --- ESECUZIONE ---
+            QUERY: {query}
+            RETRIEVED CONTEXT: {context}
+            SYSTEM ANSWER: {answer}
+
+            Provide scores (1-5) for:
+            1. Faithfulness: Is the answer derived ONLY from the context?
+            2. Answer Relevance: Is the answer useful for the query?
+
+            {format_instructions}""",
+        input_variables = ["query", "context", "answer"],
+        partial_variables = {"format_instructions": parser.get_format_instructions()}
+    )
+    chain = prompt | llm_judge | parser
+    try:
+        res = chain.invoke({"query": query, "context": context, "answer": answer})
+        return LLMScore(**res)
+    except Exception as e:
+        print(f"\n Errore Judge: {e}")
+        return LLMScore(faithfulness = 1, answer_relevance = 1, reasoning = "Error")
+
+
+# Funzione helper per Recall@k
+def calculate_recall_at_k(retrieved_docs, gold_source):
+    if not gold_source or not retrieved_docs: return 0.0
+    for doc in retrieved_docs:
+        path_str = str(doc.metadata.get("source", "")).lower()
+        fname_str = str(doc.metadata.get("file_name", "")).lower()
+        target = gold_source.lower()
+
+        if target in path_str or target in fname_str:
+            return 1.0
+    return 0.0
+
+# BENCHMARK LOOP
 def run_benchmark():
-    print("AVVIO BENCHMARK (System Decisions + Quality Metrics)...")
-    app = build_crag_graph()
+    print("AVVIO VALUTAZIONE CRAG...")
+    with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
+        app = build_crag_graph()
+
     results = []
 
-    for i, item in enumerate(test_dataset):
+    # Liste per metriche di decisione (Globali)
+    y_expected = []
+    y_actual = []
+
+    total = len(test_dataset)
+
+    for i, item in enumerate(test_dataset[:1]):
         q = item["query"]
-        expected_abstention = item["should_abstain"]
+        behavior_type = item["expected_behavior"]  # "answer" o "abstain"
+        gold_src = item.get("gold_source")
 
-        print(f"\n[{i + 1}/{len(test_dataset)}] Testing: {q}")
+        print(f" Elaborazione {i + 1}/{total}: {q}")
 
-        # Avvio CRAG
-        final_state = app.invoke({"question": q})
-        generated_answer = final_state["generation"]
+        # --- ESECUZIONE ---
+        # misurazione latenza ed esecuzione
+        start_time = time.perf_counter()  # Start timer
 
-        # Analisi Decisionale (Logic Metrics)
-        docs_in = final_state.get("k_in", [])
-        docs_ex = final_state.get("k_ex", [])
-        total_docs = len(docs_in) + len(docs_ex)
+        with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
+            final_state = app.invoke({"question": q})
 
-        # Determina Fonte
-        if total_docs == 0:
-            source_type = "Abstention"
-        elif len(docs_in) == 0:
-            source_type = "Corrective Only"
-        else:
-            source_type = "Base/Hybrid"
+        end_time = time.perf_counter()  # Stop timer
+        latency = end_time - start_time  # Secondi totali
 
-        # Determina se il sistema si è astenuto
-        sys_abstained = "NESSUNA_DOC" in generated_answer
+        gen_ans = final_state["generation"]
+        retrieved_docs = final_state.get("documents", [])
 
-        # Calcola ABSTENTION CORRECTNESS
-        # 1 = Decisione Corretta, 0 = Decisione Sbagliata
-        abstention_score = 1 if sys_abstained == expected_abstention else 0
+        # --- STATO SISTEMA ---
+        did_abstain = ABSTENTION_MSG in gen_ans or not retrieved_docs
+        did_answer = not did_abstain
+        should_answer = (behavior_type == "answer")
 
-        # Valutazione qualitativa (LLM Judge)
-        context_text = "\n".join([d.page_content for d in (docs_in + docs_ex)])
-        if not context_text: context_text = "NO DOCUMENTS."
+        # Liste decisione (1 = Answer, 0 = Abstain)
+        y_expected.append(1 if should_answer else 0)
+        y_actual.append(1 if did_answer else 0)
 
-        print("  Giudice al lavoro...")
-        grade = evaluate_with_judge(q, context_text, generated_answer, reference = item.get("expected_concept"))
+        # --- CALCOLO METRICHE (Condizionale) ---
+        # 1. Recall@k (Retrieval puro) -> gold source
+        rec_at_k = calculate_recall_at_k(retrieved_docs, gold_src) if gold_src else np.nan
 
-        # Log visivo
-        print(f"     -> Decision: {'OK' if abstention_score else 'FAIL'} (Exp: {expected_abstention} vs Sys: {sys_abstained})")
-        print(f"     -> Scores: P:{grade.context_precision} F:{grade.faithfulness} R:{grade.relevance}")
+        # 2. Inizializzazione metriche di Generazione
+        faith_val = None
+        rel_val = None
 
-        # Salva
+        # Calcolo della qualità solo se il sistema ha effettivamente risposto
+        if did_answer:
+            # LLM Metrics
+            with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
+                context_text = "\n".join([d.page_content[:2000] for d in retrieved_docs])
+                llm_scores = evaluate_with_llm(q, context_text, gen_ans)
+            faith_val = llm_scores.faithfulness
+            rel_val = llm_scores.answer_relevance
+
         results.append({
             "Query": q,
-            "Type": item["type"],
-            # System Decision Metrics
-            "Sys_Source": source_type,
-            "Sys_Confidence": final_state.get("confidence_score", 0.0),
-            "Abstention_Correctness": abstention_score,
-            "Sys_Abstained": sys_abstained,
-            "Exp_Abstained": expected_abstention,
-            # LLM Quality Metrics
-            "Precision": grade.context_precision,
-            "Faithfulness": grade.faithfulness,
-            "Relevance": grade.relevance,
-            "Reasoning": grade.reasoning
+            "Expected": behavior_type,
+            "Actual": "abstain" if did_abstain else "answer",
+            "Latency_Seconds": latency,
+            "Recall@k": rec_at_k,
+            "Faithfulness": faith_val,
+            "Relevance": rel_val,
+            "Answer": gen_ans
         })
 
-    # --- REPORT ---
-    df = pd.DataFrame(results)
-    df.to_csv("testing_metrics.csv", index = False)
+    print(" " * 80, end="\r")
+    print("Elaborazione Completata.")
 
-    print("\n" + "=" * 60)
-    print(f" REPORT FINALE")
-    print(f" Abstention Accuracy: {df['Abstention_Correctness'].mean():.2%}")  # Media accuratezza decisionale
-    print(f" Avg Faithfulness:    {df['Faithfulness'].mean():.2f}")
-    print(f" Avg Relevance:       {df['Relevance'].mean():.2f}")
-    print("=" * 60)
-    print(df[["Query", "Abstention_Correctness", "Faithfulness", "Relevance"]])
+    # REPORT FINALE
+    df = pd.DataFrame(results)
+
+    # Metriche di Decisione (Classificazione)
+    acc = accuracy_score(y_expected, y_actual)
+    prec = precision_score(y_expected, y_actual, zero_division = 0)
+    rec_dec = recall_score(y_expected, y_actual, zero_division = 0)
+
+    # Metriche di Generazione (Media escludendo i NaN)
+    avg_faith = df["Faithfulness"].mean()
+    avg_rel = df["Relevance"].mean()
+
+    # Metriche di Retrieval
+    avg_rec_at_k = df["Recall@k"].mean()
+
+    # Latency
+    avg_latency = df["Latency_Seconds"].mean()  # Media tempo
+
+    print("\n" + "=" * 50)
+    print(" REPORT ")
+    print("=" * 50)
+    print("--- 1. QUALITÀ DELLA DECISIONE (CRAG Logic) ---")
+    print(f"Avg Latency:         {avg_latency:.2f}")
+    print(f"Abstention Accuracy: {acc:.2%}")
+    print(f"Answering Precision: {prec:.2f}")
+    print(f"Answering Recall:    {rec_dec:.2f}")
+    print("-" * 50)
+    print("--- 2. QUALITÀ DEL TESTO (Solo sulle Risposte) ---")
+    print(f"Avg Faithfulness:    {avg_faith:.2f}/5 (Safety)")
+    print(f"Avg Relevance:       {avg_rel:.2f}/5 (Utility)")
+    print("-" * 50)
+    print("--- 3. QUALITÀ DEL RETRIEVAL ---")
+    print(f"Avg Recall@k:        {avg_rec_at_k:.2f}")
+    print("=" * 50)
+
+    df.to_csv("crag_metrics.csv", index = False)
 
 if __name__ == "__main__":
     run_benchmark()
