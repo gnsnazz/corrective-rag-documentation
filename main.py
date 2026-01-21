@@ -1,5 +1,6 @@
 from app.crag.graph import build_crag_graph
 from app.utils import save_documentation
+from app.config import ABSTENTION_MSG
 
 def main():
     print("Avvio CRAG...")
@@ -10,8 +11,9 @@ def main():
     print("-" * 30)
 
     # query tecnica corretta/valida
-    query = "How do I use the VideoEditor class to trim an mp4 file?"
+    #query = "How do I use the VideoEditor class to trim an mp4 file?"
     #query = "How to load a pre-trained BERT model using from_pretrained?"
+    query = "How do I save a model using save_pretrained?"
 
     # query ambigua
     #query = "Explain BERT model architecture"
@@ -27,7 +29,7 @@ def main():
     #query = "What is Trainer?"
 
     # query errata
-    #query = "How does the moon affect deep learning?"
+    query = "How does the moon affect deep learning?"
     #query = "How to use React Hooks?
     #query = "How to cook carbonara with Transformers?"
 
@@ -37,7 +39,7 @@ def main():
     result = app.invoke({"question": query})
     content = result.get("generation", "")
 
-    if not content or "NESSUNA_DOC" in content:
+    if not content or ABSTENTION_MSG in content:
         print("  Skip: Informazioni non trovate.")
     else:
         # Salva documentazione generata
