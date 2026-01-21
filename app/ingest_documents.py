@@ -1,111 +1,70 @@
 import os
-import time
-from pathlib import Path
+import shutil
 
-from langchain_text_splitters import MarkdownTextSplitter
 from langchain_chroma import Chroma
-from langchain_community.document_loaders import TextLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from embeddings import get_embedding_model
-from config import REPO_PATH, DB_DIR
+from config import DB_DIR, REPO_PATH
 
-FILE_EXTENSIONS = [".md"]   # solo file markdown per ora
-
-def load_markdown_files(repo_path: str):
-    """
-    Carica tutti i file markdown dalla repository.
-    """
-    documents = []
-
-    for root, _, files in os.walk(repo_path):
-        for file in files:
-            ext = Path(file).suffix.lower()
-
-            if ext in FILE_EXTENSIONS:
-                full_path = os.path.join(root, file)
-                #print(f"Carico: {full_path}")
-                try:
-                    loader = TextLoader(full_path, encoding="utf-8", autodetect_encoding=True)
-                    loaded_docs = loader.load()
-
-                    for doc in loaded_docs:
-                        doc.metadata["source"] = full_path
-                        doc.metadata["filename"] = file
-
-                    documents.extend(loaded_docs)
-                except Exception as e:
-                    print(f" Errore nel file: {file}: {e}")
-                    continue
-
-    print(f"\nTotale file caricati: {len(documents)}")
-    return documents
+def load_documents():
+    """Carica i documenti Markdown dalla directory."""
+    loader = DirectoryLoader(
+        REPO_PATH,
+        glob = "**/*.md",
+        loader_cls = TextLoader,
+        loader_kwargs = {"encoding": "utf-8", "autodetect_encoding": True},
+        silent_errors = True,
+        show_progress = True
+    )
+    docs = loader.load()
+    print(f"--- Caricati {len(docs)} documenti grezzi ---")
+    return docs
 
 
 def split_documents(documents):
     """
-    Divide i documenti in chunk ottimizzati per RAG.
+    Divide i documenti in chunk.
     """
-    splitter = MarkdownTextSplitter(
-        chunk_size=800,
-        chunk_overlap=150,
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size = 1000,
+        chunk_overlap = 100,
+        length_function = len,
+        is_separator_regex = False,
     )
-    return splitter.split_documents(documents)
+    chunks = text_splitter.split_documents(documents)
+    print(f"--- Generati {len(chunks)} chunks di testo ---")
+    return chunks
 
 
-def ingest_repository(repo_path: str = REPO_PATH, db_dir: str = DB_DIR):
-    """
-    Pipeline completa:
-    - carica markdown
-    - splitta
-    - crea embeddings
-    - salva vectorstore
-    """
-    print("\nInizio ingest della repository...\n")
+def save_to_chroma(chunks):
+    """Crea e salva il Vector Store."""
 
-    # 1. Carica file markdown
-    documents = load_markdown_files(repo_path)
+    # 1. Pulizia iniziale
+    if os.path.exists(DB_DIR):
+        print("--- Cancellazione vecchio DB ---")
+        shutil.rmtree(DB_DIR)
 
-    if not documents:
-        print("Nessun file trovato. Controlla REPO_PATH.")
-        return
+    # 2. Creazione nuovo DB
+    model = get_embedding_model()
 
-    # 2. Splitta in chunk
-    print("\nSplit dei documenti...")
+    print("--- Inizio indicizzazione ---")
+
+    db = Chroma.from_documents(
+        chunks,
+        model,
+        persist_directory = DB_DIR
+    )
+
+    print(f"--- Salvataggio completato in {DB_DIR} ---")
+
+
+def main():
+    print("--- INIZIO INGESTION ---")
+    documents = load_documents()
     chunks = split_documents(documents)
-    total_chunks = len(chunks)
-    print(f"   → {total_chunks} chunk generati\n")
-
-    # 3. Embeddings MiniLM
-    print("Creo embeddings (MiniLM)...")
-    embeddings = get_embedding_model()
-
-    # 4. Salva in vectorstore
-    print(f"\nConnessione al DB: {db_dir}")
-    vectorstore = Chroma(
-        embedding_function=embeddings,
-        persist_directory=db_dir
-    )
-
-    batch_size = 100  # Numero di chunk per volta
-    print(f"🔄 Inizio inserimento a batch (Dimensione batch: {batch_size})...")
-
-    start_time = time.time()
-
-    for i in range(0, total_chunks, batch_size):
-        # Prendi una fetta di chunk
-        batch = chunks[i: i + batch_size]
-
-        # Aggiunge al DB
-        vectorstore.add_documents(batch)
-
-        # Feedback visivo
-        percent = ((i + len(batch)) / total_chunks) * 100
-        print(f"   Batch salvato: {i + len(batch)}/{total_chunks} ({percent:.1f}%)")
-
-    end_time = time.time()
-    duration = end_time - start_time
-
-    print(f"\n Ingest completato in {duration:.2f} secondi!")
-    print(f"\n Vector DB in {db_dir}\n")
+    save_to_chroma(chunks)
+    print("--- FINE INGESTION ---")
 
 if __name__ == "__main__":
-    ingest_repository()
+    main()

@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from typing import Literal
 
 from app.embeddings import get_embedding_model
-from app.config import DB_DIR
+from app.config import DB_DIR, ABSTENTION_MSG
 from app.crag.state import GraphState, CragDocument
 
 from app.crag.prompts import (
@@ -208,7 +208,7 @@ def generate(state: GraphState):
     # Se il Grader (Evaluator) ha scartato tutto, non si delega all'LLM.
     if not all_docs:
         print("   HARD STOP: Nessuna evidenza valida trovata -> Astensione.")
-        return {"generation": "NESSUNA_DOC"}
+        return {"generation": ABSTENTION_MSG}
 
     context_parts = []
 
