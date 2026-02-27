@@ -98,5 +98,5 @@ Documentation (Markdown):"""
 
 generate_prompt = PromptTemplate(
     template = GENERATE_TEMPLATE,
-    input_variables = ["context", "question", "len_docs"]
+    input_variables = ["context", "question"]
 )

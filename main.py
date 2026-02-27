@@ -1,6 +1,6 @@
 from app.crag.graph import build_crag_graph
 from app.utils import save_documentation
-from app.config import ABSTENTION_MSG
+from app.config import ABSTENTION_MSG, format_source
 
 def main():
     print("Avvio CRAG...")
@@ -17,21 +17,13 @@ def main():
 
     # query ambigua
     #query = "Explain BERT model architecture"
-    #query = "What is the default dropout rate in ALBERT?"
-    #query = "What is the architecture of BERT?"
     #query = "How does T5 handle text-to-text tasks?"
 
     # query non corretta
     #query = "asdasd qweqwe transformers banana"
-    #query = "t5 model training arguments banana config"
-
-    # query breve
-    #query = "What is Trainer?"
 
     # query errata
-    query = "How does the moon affect deep learning?"
-    #query = "How to use React Hooks?
-    #query = "How to cook carbonara with Transformers?"
+    #query = "How does the moon affect deep learning?"
 
     print(f"\n Generazione per: '{query}'...")
 
@@ -44,7 +36,7 @@ def main():
     else:
         # Salva documentazione generata
         path = save_documentation(content, query)
-        print(f"\n Documentazione salvata in: {path}")
+        print(f"\n Documentazione salvata in: {format_source(path)}")
 
         # Anteprima contenuto
         print("\n   ANTEPRIMA CONTENUTO GENERATO:")

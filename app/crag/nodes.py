@@ -2,11 +2,13 @@ import os
 from langchain_chroma import Chroma
 from langchain_anthropic import ChatAnthropic
 from langchain_core.output_parsers import StrOutputParser
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel, Field
 from typing import Literal
+import numpy as np
 
 from app.embeddings import get_embedding_model
-from app.config import DB_DIR, ABSTENTION_MSG
+from app.config import DB_DIR, ABSTENTION_MSG, K_CORRECTIVE, STRIP_SIMILARITY_THRESHOLD, format_source
 from app.crag.state import GraphState, CragDocument
 
 from app.crag.prompts import (
@@ -18,7 +20,7 @@ from app.crag.prompts import (
 
 # Modello locale
 llm = ChatAnthropic(
-    model_name = "claude-sonnet-4-5-20250929",
+    model_name = "claude-sonnet-4-5-20250929", #claude-haiku-4-5-20251001
     temperature = 0,
     timeout = None,
     stop = None,
@@ -42,12 +44,13 @@ if not os.path.exists(DB_DIR):
 
 embeddings = get_embedding_model()
 vectorstore = Chroma(persist_directory = DB_DIR, embedding_function = embeddings)
-retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+retriever = vectorstore.as_retriever(search_kwargs={"k": 8})
 
-# Parametri CRAG
-CONFIDENCE_THRESHOLD = 0.5  # Se < 50% dei docs sono validi -> Corrective Search
-MAX_RETRIES = 1             # Numero di cicli correttivi
-K_CORRECTIVE = 10           # Documenti giro correttivo
+strip_splitter = RecursiveCharacterTextSplitter(
+    chunk_size      = 200,
+    chunk_overlap   = 20,
+    length_function = len,
+)
 
 # --- NODI ---
 def retrieve(state: GraphState):
@@ -68,11 +71,52 @@ def retrieve(state: GraphState):
 
     return {
         "documents": crag_docs,
+        "final_documents": crag_docs,
         "k_in": [],     # Reset liste
         "k_ex": [],
         "confidence_score": 0.0,
         "previous_queries": [state.question]  # Inizializza memoria
     }
+
+
+def decompose_then_recompose(doc: CragDocument, question: str) -> str | None:
+    """
+    Knowledge Refinement:
+    1. DECOMPOSE — split algoritmico in strip
+    2. FILTER — cosine similarity tra query e strip
+    3. RECOMPOSE — riconcatena gli strip rilevanti in ordine originale
+    """
+
+    # --- 1. DECOMPOSE ---
+    strips = strip_splitter.split_text(doc.page_content)
+    if not strips:
+        return None
+
+    # Strip troppo corti non portano informazione
+    strips = [s for s in strips if len(s.strip()) > 30]
+    if not strips:
+        return None
+
+    # --- 2. FILTER (similarità semantica) ---
+    query_emb  = np.array(embeddings.embed_query(question))
+    strip_embs = np.array(embeddings.embed_documents(strips))
+
+    # Cosine similarity (i vettori sono già normalizzati con normalize_embeddings=True)
+    similarities = strip_embs @ query_emb
+
+    relevant_strips = [
+        strip for strip, sim in zip(strips, similarities)
+        if sim >= STRIP_SIMILARITY_THRESHOLD
+    ]
+
+    print(f"    Strips: {len(strips)} totali -> {len(relevant_strips)} rilevanti "
+          f"(soglia: {STRIP_SIMILARITY_THRESHOLD})")
+
+    if not relevant_strips:
+        return None
+
+    # --- 3. RECOMPOSE ---
+    return "\n".join(relevant_strips)
 
 
 def grade_documents(state: GraphState):
@@ -98,29 +142,27 @@ def grade_documents(state: GraphState):
             ("user", f"Question: {state.question}\nDoc Snippet: {doc.page_content}")
         ])
         score = grade.score.lower()
+        src = format_source(doc.metadata.get('source', ''))
 
         # 2. LOGICA
         if score == "incorrect":
-            print(f"  Incorrect: {doc.metadata.get('source')}")
+            print(f"  Incorrect: {src}")
             doc.relevance_score = "incorrect"
             continue  # Passa al prossimo documento
 
         # 3. KNOWLEDGE REFINEMENT
         # Il documento è 'correct' o 'ambiguous', applichiamo il Refinement per estrarre strip precisi.
-        print(f"  {score.capitalize()} -> Refining... {doc.metadata.get('source')}")
+        print(f"  {score.capitalize()} -> Refining... {src}")
 
         try:
-            refined_text = refine_chain.invoke({
-                "question": state.question,
-                "document": doc.page_content
-            })
+            refined_text = decompose_then_recompose(doc, state.question)
         except Exception as e:
             print(f"    Error during refinement: {e}")
             continue
 
         # 4. VALIDAZIONE POST-REFINEMENT
         # Accettiamo il documento solo se il Refiner ha estratto contenuto utile
-        if "IRRELEVANT" not in refined_text and len(refined_text) > 20:
+        if refined_text:
             print(f"    Refined Success")
 
             # Sovrascrive il contenuto grezzo con quello pulito (Strip)
@@ -145,10 +187,13 @@ def grade_documents(state: GraphState):
             # External/Extended Knowledge
             new_k_ex.append(d)
 
-    # Calcola confidenza sul batch corrente
+    # Calcola confidenza cumulativa
     confidence = valid_count / total_docs_in_batch if total_docs_in_batch > 0 else 0.0
-    print(f"  Batch Confidence: {confidence:.2f} (Threshold: {CONFIDENCE_THRESHOLD})")
-    print(f"  Accumulated -> k_in: {len(new_k_in)} | k_ex: {len(new_k_ex)}")
+    current_threshold = getattr(state, "confidence_threshold", 0.5)
+
+    print(f"  Batch valid: {valid_count}/{total_docs_in_batch}")
+    print(f"  Batch confidence {confidence:.2f} (Current Threshold: {current_threshold:.2f})")
+    print(f"  Accumulated total -> k_in: {len(new_k_in)} | k_ex: {len(new_k_ex)}")
 
     return {"k_in": new_k_in, "k_ex": new_k_ex, "confidence_score": confidence}
 
@@ -174,7 +219,6 @@ def corrective_retriever(state: GraphState):
 
     # k leggermente più alto per cercare più a fondo
     corrective = vectorstore.as_retriever(search_kwargs = {"k": K_CORRECTIVE})
-
     raw_docs = corrective.invoke(state.question)
 
     crag_docs = [
@@ -189,8 +233,10 @@ def corrective_retriever(state: GraphState):
 
     print(f"  Retrieved {len(crag_docs)} new docs.")
 
-    # Lo scorer analizzerà SOLO quelli nuovi
-    return {"documents": crag_docs}
+    all_docs = state.final_documents + crag_docs
+
+    # Lo scorer analizzerà solo quelli nuovi, vengono accumulati tutti gli altri
+    return {"documents": crag_docs, "final_documents": all_docs}
 
 
 def generate(state: GraphState):

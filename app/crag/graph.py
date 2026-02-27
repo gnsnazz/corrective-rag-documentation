@@ -1,13 +1,12 @@
 from langgraph.graph import END, StateGraph
 from app.crag.state import GraphState
+from app.config import MAX_RETRIES, CONFIDENCE_THRESHOLD
 from app.crag.nodes import (
     retrieve,
     grade_documents,
     transform_query,
     corrective_retriever,
-    generate,
-    CONFIDENCE_THRESHOLD,
-    MAX_RETRIES
+    generate
 )
 
 def decide_next_node(state: GraphState):
@@ -19,19 +18,21 @@ def decide_next_node(state: GraphState):
     """
     confidence = state.confidence_score
     retries = state.retry_count
+    #threshold = state.confidence_threshold
+    threshold = getattr(state, "confidence_threshold", 0.5)
 
     # 1: Confidenza alta (abbastanza doc Correct/Refined)
-    if confidence >= CONFIDENCE_THRESHOLD:
-        print(f"  Confidence High ({confidence:.2f}) -> Generating Answer")
+    if confidence >= threshold:
+        print(f"  Confidence High ({confidence:.2f} >= {confidence:.2f}) -> Generating Answer")
         return "generate"
 
     # 2: Confidenza bassa, retry
     if retries < MAX_RETRIES:
-        print(f"  Confidence Low ({confidence:.2f}) -> Corrective Search needed")
+        print(f"  Confidence Low ({confidence:.2f} < {threshold:.2f}) -> Corrective Search needed")
         return "transform_query"
 
     # 3: Confidenza bassa, tentativi finiti -> Genera con quello che abbiamo
-    print(f"  Max Retries Reached ({retries}) -> Generating Best-Effort Answer")
+    print(f"  Max Retries Reached ({retries} / {MAX_RETRIES}) -> Generating Best-Effort Answer")
     return "generate"
 
 
