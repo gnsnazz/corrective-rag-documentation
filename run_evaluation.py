@@ -5,7 +5,7 @@ import contextlib
 import os
 
 from dotenv import load_dotenv
-from langchain_ollama import ChatOllama
+from langchain_anthropic import ChatAnthropic
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, Field
@@ -21,11 +21,14 @@ class LLMScore(BaseModel):
     reasoning: str = Field(description = "Short Reasoning")
 
 
-llm_judge = ChatOllama(
-    model = "llama3.1",
+llm_judge = ChatAnthropic(
+    model_name = "claude-haiku-4-5-20251001", #claude-sonnet-4-5-20250929
     temperature = 0,
-    format = "json"
+    timeout = None,
+    stop = None,
+    max_retries = 2
 )
+
 parser = JsonOutputParser(pydantic_object = LLMScore)
 
 # GOLD SET – CRAG EVALUATION DATASET

@@ -21,13 +21,13 @@ class GraphState(BaseModel):
     generation: Optional[str] = None
     # Documenti attualmente sotto esame (batch corrente)
     documents: List[CragDocument] = Field(default_factory = list)
-    # Accumulatore di documenti validi (Correct + Refined) pronti per la generazione
-    #final_documents: List[CragDocument] = Field(default_factory=list)
+    # Accumulatore di documenti validi (Correct + Refined)
+    final_documents: List[CragDocument] = Field(default_factory = list)
     k_in: List[CragDocument] = Field(default_factory = list)  # correct + refined (Knowledge Interna)
     k_ex: List[CragDocument] = Field(default_factory = list)  # corrective research (Knowledge Esterna/Correttiva)
 
     # Metriche di controllo
-    #confidence_score: Optional[float] = None
+    confidence_threshold: float = 0.5
     confidence_score: float = 0.0
     retry_count: int = 0
 
