@@ -13,7 +13,6 @@ from app.crag.state import GraphState, CragDocument
 
 from app.crag.prompts import (
     GRADER_SYSTEM_MSG,
-    refine_prompt,
     rewrite_prompt,
     generate_prompt
 )
@@ -47,8 +46,8 @@ vectorstore = Chroma(persist_directory = DB_DIR, embedding_function = embeddings
 retriever = vectorstore.as_retriever(search_kwargs={"k": 8})
 
 strip_splitter = RecursiveCharacterTextSplitter(
-    chunk_size      = 200,
-    chunk_overlap   = 20,
+    chunk_size = 200,
+    chunk_overlap = 20,
     length_function = len,
 )
 
@@ -75,7 +74,9 @@ def retrieve(state: GraphState):
         "k_in": [],     # Reset liste
         "k_ex": [],
         "confidence_score": 0.0,
-        "previous_queries": [state.question]  # Inizializza memoria
+        "total_docs_examined": 0,
+        "crag_action" : "pending",
+        "previous_queries": [state.question]
     }
 
 
@@ -133,7 +134,6 @@ def grade_documents(state: GraphState):
     total_docs_in_batch = len(state.documents)
     valid_count = 0  # Conta sia 'correct' che 'refined'
 
-    refine_chain = refine_prompt | llm | StrOutputParser()
 
     for doc in state.documents:
         # 1. EVALUATION (LLM Grader)
@@ -161,16 +161,14 @@ def grade_documents(state: GraphState):
             continue
 
         # 4. VALIDAZIONE POST-REFINEMENT
-        # Accettiamo il documento solo se il Refiner ha estratto contenuto utile
+        # Accetta il documento solo se il Refiner ha estratto contenuto utile
         if refined_text:
             print(f"    Refined Success")
-
             # Sovrascrive il contenuto grezzo con quello pulito (Strip)
             doc.page_content = refined_text
             doc.relevance_score = "refined" # Contrassegnato come refined
-
             current_valid_docs.append(doc)
-            valid_count += 1                # Conta per la confidence
+            valid_count += 1
         else:
             print(f"    Refinement Failed (Irrelevant)")
 
@@ -188,14 +186,52 @@ def grade_documents(state: GraphState):
             new_k_ex.append(d)
 
     # Calcola confidenza cumulativa
-    confidence = valid_count / total_docs_in_batch if total_docs_in_batch > 0 else 0.0
-    current_threshold = getattr(state, "confidence_threshold", 0.5)
+    new_total_examined = state.total_docs_examined + total_docs_in_batch
+    cumulative_valid = len(new_k_in) + len(new_k_ex)
+    batch_confidence = valid_count / total_docs_in_batch if total_docs_in_batch > 0 else 0.0
+    confidence = cumulative_valid / new_total_examined if new_total_examined > 0 else 0.0
 
-    print(f"  Batch valid: {valid_count}/{total_docs_in_batch}")
-    print(f"  Batch confidence {confidence:.2f} (Current Threshold: {current_threshold:.2f})")
-    print(f"  Accumulated total -> k_in: {len(new_k_in)} | k_ex: {len(new_k_ex)}")
+    upper = state.upper_threshold
+    lower = state.lower_threshold
 
-    return {"k_in": new_k_in, "k_ex": new_k_ex, "confidence_score": confidence}
+    if confidence >= upper:
+        action = "correct"
+    elif confidence >= lower:
+        action = "ambiguous"
+    else:
+        action = "incorrect"
+
+    print(f"\n  Batch: {valid_count}/{total_docs_in_batch} validi (batch confidence: {batch_confidence:.2f})")
+    print(f"  Cumulative: {cumulative_valid}/{new_total_examined} validi -> confidence {confidence:.2f}")
+    print(f"  CRAG Action: {action.upper()} (thresholds: {lower:.2f} / {upper:.2f})")
+    print(f"  Accumulated -> k_in: {len(new_k_in)} | k_ex: {len(new_k_ex)}")
+
+    return {
+        "k_in": new_k_in,
+        "k_ex": new_k_ex,
+        "confidence_score": confidence,
+        "total_docs_examined": new_total_examined,
+        "crag_action": action
+    }
+
+def discard_knowledge(state: GraphState):
+    """
+    Nodo INCORRECT: scarta la knowledge interna (k_in) raccolta finora.
+
+    Quando il retrieval evaluator determina che i documenti recuperati sono
+    complessivamente irrilevanti (INCORRECT), mantenere quei documenti
+    inquinerebbe la generazione. Si azzerano i k_in e si procede
+    solo con il corrective retrieval.
+    """
+    print("\n   [2b] DISCARD KNOWLEDGE (INCORRECT action)")
+    discarded = len(state.k_in)
+    print(f"  Discarding {discarded} internal docs (k_in) — retrieval deemed unreliable")
+
+    return {
+        "k_in": [],  # Azzera la knowledge interna
+        # k_ex viene preservato se presente (da giri correttivi precedenti)
+    }
+
 
 def transform_query(state: GraphState):
     print("\n   [3] QUERY REWRITE")
