@@ -27,7 +27,7 @@ class GraphState(BaseModel):
     k_ex: List[CragDocument] = Field(default_factory = list)  # corrective research (Knowledge Esterna/Correttiva)
 
     # Metriche di controllo
-    confidence_threshold: float = 0.5
+    confidence_threshold: float = 0.60
     confidence_score: float = 0.0
     retry_count: int = 0
 

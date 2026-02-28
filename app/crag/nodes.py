@@ -20,7 +20,7 @@ from app.crag.prompts import (
 
 # Modello locale
 llm = ChatAnthropic(
-    model_name = "claude-sonnet-4-5-20250929", #claude-haiku-4-5-20251001
+    model_name = "claude-haiku-4-5-20251001", #claude-sonnet-4-5-20250929
     temperature = 0,
     timeout = None,
     stop = None,

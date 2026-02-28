@@ -18,8 +18,8 @@ def decide_next_node(state: GraphState):
     """
     confidence = state.confidence_score
     retries = state.retry_count
-    #threshold = state.confidence_threshold
-    threshold = getattr(state, "confidence_threshold", 0.5)
+    threshold = state.confidence_threshold
+    #threshold = getattr(state, "confidence_threshold", 0.60)
 
     # 1: Confidenza alta (abbastanza doc Correct/Refined)
     if confidence >= threshold:
