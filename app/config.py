@@ -16,8 +16,7 @@ def format_source(path: str) -> str:
     return os.path.basename(path) if path else "unknown"
 
 # Parametri CRAG
-CONFIDENCE_THRESHOLD = 0.5  # Se < 50% dei docs sono validi -> Corrective Search
-MAX_RETRIES = 1             # Numero di cicli correttivi
+MAX_RETRIES = 2             # Numero di cicli correttivi
 K_CORRECTIVE = 10           # Documenti giro correttivo
 
-STRIP_SIMILARITY_THRESHOLD = 0.55  # Soglia cosine similarity per tenere uno strip
+STRIP_SIMILARITY_THRESHOLD = 0.50  # Soglia cosine similarity per tenere uno strip

@@ -1,6 +1,6 @@
 from langgraph.graph import END, StateGraph
 from app.crag.state import GraphState
-from app.config import MAX_RETRIES, CONFIDENCE_THRESHOLD
+from app.config import MAX_RETRIES
 from app.crag.nodes import (
     retrieve,
     grade_documents,
@@ -23,7 +23,7 @@ def decide_next_node(state: GraphState):
 
     # 1: Confidenza alta (abbastanza doc Correct/Refined)
     if confidence >= threshold:
-        print(f"  Confidence High ({confidence:.2f} >= {confidence:.2f}) -> Generating Answer")
+        print(f"  Confidence High ({confidence:.2f} >= {threshold:.2f}) -> Generating Answer")
         return "generate"
 
     # 2: Confidenza bassa, retry

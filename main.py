@@ -6,13 +6,11 @@ def main():
     print("Avvio CRAG...")
 
     app = build_crag_graph()
-    print("-" * 30)
-    print("   TEST GENERAZIONE DOC    ")
-    print("-" * 30)
 
     # query tecnica corretta/valida
     #query = "How do I use the VideoEditor class to trim an mp4 file?"
-    query = "How to load a pre-trained BERT model using from_pretrained?"
+    query = "How do I load a pre-trained BERT model using AutoModel?"
+
     #query = "How do I save a model using save_pretrained?"
 
     # query ambigua

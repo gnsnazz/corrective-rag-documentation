@@ -9,31 +9,46 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, Field
-from sklearn.metrics import accuracy_score, precision_score, recall_score
+from sklearn.metrics import precision_score, recall_score, f1_score
 from app.crag.graph import build_crag_graph
 from app.config import ABSTENTION_MSG
 
 load_dotenv()
 
 class LLMScore(BaseModel):
-    faithfulness: int = Field(description = "Score 1-5: Is the answer grounded in the context? (1 = Hallucination, 5 = Fully Supported)")
-    answer_relevance: int = Field(description = "Score 1-5: Does the answer address the user query? (1 = Irrelevant, 5 = Perfect)")
-    reasoning: str = Field(description = "Short Reasoning")
-
+    faithfulness:     int = Field(description = "Score 1-5: Is the answer grounded in the context? (1=Hallucination, 5=Fully Supported)")
+    answer_relevance: int = Field(description = "Score 1-5: Does the answer address the user query? (1=Irrelevant, 5=Perfect)")
+    reasoning:        str = Field(description = "Short reasoning for the scores")
 
 llm_judge = ChatAnthropic(
-    model_name = "claude-haiku-4-5-20251001", #claude-sonnet-4-5-20250929
+    model_name  = "claude-haiku-4-5-20251001",
     temperature = 0,
     timeout = None,
     stop = None,
     max_retries = 2
 )
 
-parser = JsonOutputParser(pydantic_object = LLMScore)
+parser = JsonOutputParser(pydantic_object=LLMScore)
+judge_chain = PromptTemplate(template =
+"""You are an evaluator. Rate the RAG system output.
 
-# GOLD SET – CRAG EVALUATION DATASET
+QUERY: {query}
+RETRIEVED CONTEXT: {context}
+SYSTEM ANSWER: {answer}
+
+Provide scores (1-5) for:
+1. Faithfulness: Is the answer derived ONLY from the context? (1=Hallucination, 5=Fully Supported)
+2. Answer Relevance: Is the answer useful for the query? (1=Irrelevant, 5=Perfect)
+
+{format_instructions}""",
+    input_variables = ["query", "context", "answer"],
+    partial_variables = {"format_instructions": parser.get_format_instructions()}) | llm_judge | parser
+
+
+# ---------------------------------------------------------------------------
+# GOLD SET — CRAG Evaluation Dataset
 # Repository: transformers/docs/source/en
-
+# ---------------------------------------------------------------------------
 test_dataset = [
     # 1. INTEGRITY — Base Facts & API Usage
     {
@@ -96,7 +111,7 @@ test_dataset = [
         "gold_source": None,
     },
     {
-        "query": "Which parameter enables automatic dataset cleaning in Trainer?",
+        "query": "What does the auto_delete_dataset parameter do in Trainer?",
         "expected_behavior": "abstain",
         "gold_source": None,
     },
@@ -105,12 +120,12 @@ test_dataset = [
     {
         "query": "What deprecation warning is shown for the old Adam optimizer?",
         "expected_behavior": "answer",
-        "gold_source": "optimization.md",
+        "gold_source": "optimizers.md",
     },
     {
         "query": "What optimizer is recommended instead of the deprecated Adam implementation?",
         "expected_behavior": "answer",
-        "gold_source": "optimization.md",
+        "gold_source": "optimizers.md",
     },
     {
         "query": "How do I use BitsAndBytesConfig for 4-bit quantization?",
@@ -120,11 +135,10 @@ test_dataset = [
     {
         "query": "How do I enable mixed precision training with the Trainer API?",
         "expected_behavior": "answer",
-        "gold_source": "training_args.md",
+        "gold_source": "trainer.md",
     },
 
     # 5. COMPLETENESS / SYNTHESIS — Multi-Document Answers
-    # (Recall@k not applicable → gold_source = None)
     {
         "query": "Summarize the steps required to fine-tune a model using the Trainer API.",
         "expected_behavior": "answer",
@@ -142,153 +156,162 @@ test_dataset = [
     },
 ]
 
-def evaluate_with_llm(query, context, answer):
-    prompt = PromptTemplate(
-        template = """You are an evaluator. Rate the RAG system output.
 
-            QUERY: {query}
-            RETRIEVED CONTEXT: {context}
-            SYSTEM ANSWER: {answer}
-
-            Provide scores (1-5) for:
-            1. Faithfulness: Is the answer derived ONLY from the context?
-            2. Answer Relevance: Is the answer useful for the query?
-
-            {format_instructions}""",
-        input_variables = ["query", "context", "answer"],
-        partial_variables = {"format_instructions": parser.get_format_instructions()}
-    )
-    chain = prompt | llm_judge | parser
+def evaluate_with_llm(query: str, context: str, answer: str) -> LLMScore:
     try:
-        res = chain.invoke({"query": query, "context": context, "answer": answer})
+        res = judge_chain.invoke({"query": query, "context": context, "answer": answer})
         return LLMScore(**res)
     except Exception as e:
-        print(f"\n Errore Judge: {e}")
+        print(f"  [WARN] LLM Judge error: {e}")
         return LLMScore(faithfulness = 1, answer_relevance = 1, reasoning = "Error")
 
 
-# Funzione helper per Recall@k
-def calculate_recall_at_k(retrieved_docs, gold_source):
-    if not gold_source or not retrieved_docs: return 0.0
-    for doc in retrieved_docs:
-        path_str = str(doc.metadata.get("source", "")).lower()
+def calculate_recall_at_k(docs: list, gold_source: str) -> float:
+    """Recall@k — il gold source è tra i documenti forniti?"""
+    if not gold_source or not docs:
+        return 0.0
+    target = gold_source.lower()
+    for doc in docs:
+        path_str  = str(doc.metadata.get("source", "")).lower()
         fname_str = str(doc.metadata.get("file_name", "")).lower()
-        target = gold_source.lower()
-
         if target in path_str or target in fname_str:
             return 1.0
     return 0.0
 
-# BENCHMARK LOOP
+
+def compute_decision_metrics(y_expected: list, y_actual: list) -> dict:
+    """Metriche di routing separate per classe"""
+    answer_indices  = [i for i, e in enumerate(y_expected) if e == 1]
+    abstain_indices = [i for i, e in enumerate(y_expected) if e == 0]
+
+    answer_acc = (
+        sum(1 for i in answer_indices  if y_actual[i] == 1) / len(answer_indices)
+        if answer_indices else 0.0
+    )
+    abstain_acc = (
+        sum(1 for i in abstain_indices if y_actual[i] == 0) / len(abstain_indices)
+        if abstain_indices else 0.0
+    )
+
+    return {
+        "answer_acc": answer_acc,
+        "abstain_acc": abstain_acc,
+        "balanced_acc": (answer_acc + abstain_acc) / 2,
+        "precision": precision_score(y_expected, y_actual, zero_division = 0),
+        "recall": recall_score(y_expected, y_actual, zero_division = 0),
+        "f1": f1_score(y_expected, y_actual, zero_division = 0),
+    }
+
+
 def run_benchmark():
-    print("AVVIO VALUTAZIONE CRAG...")
+    print("=" * 55)
+    print(" AVVIO VALUTAZIONE CRAG")
+    print(f" Test set: {len(test_dataset)} query")
+    print("=" * 55)
+
     with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
         app = build_crag_graph()
 
     results = []
-
-    # Liste per metriche di decisione (Globali)
     y_expected = []
     y_actual = []
-
     total = len(test_dataset)
 
     for i, item in enumerate(test_dataset[:1]):
         q = item["query"]
-        behavior_type = item["expected_behavior"]  # "answer" o "abstain"
+        behavior_type = item["expected_behavior"]
         gold_src = item.get("gold_source")
 
-        print(f" Elaborazione {i + 1}/{total}: {q}")
+        print(f" [{i+1:02d}/{total}] {q[:60]}...")
 
-        # --- ESECUZIONE ---
-        # misurazione latenza ed esecuzione
-        start_time = time.perf_counter()  # Start timer
-
+        # Esecuzione + latenza
+        start = time.perf_counter()
         with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
             final_state = app.invoke({"question": q})
+        latency = time.perf_counter() - start
 
-        end_time = time.perf_counter()  # Stop timer
-        latency = end_time - start_time  # Secondi totali
+        gen_ans    = final_state.get("generation", "")
+        k_in       = final_state.get("k_in", [])
+        k_ex       = final_state.get("k_ex", [])
+        valid_docs = k_in + k_ex
+        all_docs   = final_state.get("documents", [])  # batch grezzo per Recall@k pre-grading
 
-        gen_ans = final_state["generation"]
-        retrieved_docs = final_state.get("documents", [])
-
-        # --- STATO SISTEMA ---
-        did_abstain = ABSTENTION_MSG in gen_ans or not retrieved_docs
-        did_answer = not did_abstain
+        # Decisione
+        did_abstain   = (ABSTENTION_MSG in gen_ans) or (not valid_docs)
+        did_answer    = not did_abstain
         should_answer = (behavior_type == "answer")
 
-        # Liste decisione (1 = Answer, 0 = Abstain)
         y_expected.append(1 if should_answer else 0)
         y_actual.append(1 if did_answer else 0)
 
-        # --- CALCOLO METRICHE (Condizionale) ---
-        # 1. Recall@k (Retrieval puro) -> gold source
-        rec_at_k = calculate_recall_at_k(retrieved_docs, gold_src) if gold_src else np.nan
+        status = "✅" if (did_answer == should_answer) else "❌"
+        print(f"        {status} Expected [{behavior_type}] -> Got [{'answer' if did_answer else 'abstain'}]")
 
-        # 2. Inizializzazione metriche di Generazione
+        # Recall@k pre-grading (retriever puro) e post-grading (dopo grading+refinement)
+        rec_pre  = calculate_recall_at_k(all_docs,   gold_src) if gold_src else np.nan
+        rec_post = calculate_recall_at_k(valid_docs, gold_src) if gold_src else np.nan
+
+        # LLM Judge — solo se ha risposto
         faith_val = None
-        rel_val = None
+        rel_val   = None
+        reasoning = None
 
-        # Calcolo della qualità solo se il sistema ha effettivamente risposto
         if did_answer:
-            # LLM Metrics
+            context_text = "\n\n".join(d.page_content for d in valid_docs)[:6000]
             with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
-                context_text = "\n".join([d.page_content[:2000] for d in retrieved_docs])
-                llm_scores = evaluate_with_llm(q, context_text, gen_ans)
-            faith_val = llm_scores.faithfulness
-            rel_val = llm_scores.answer_relevance
+                scores = evaluate_with_llm(q, context_text, gen_ans)
+            faith_val = scores.faithfulness
+            rel_val   = scores.answer_relevance
+            reasoning = scores.reasoning
 
         results.append({
-            "Query": q,
-            "Expected": behavior_type,
-            "Actual": "abstain" if did_abstain else "answer",
-            "Latency_Seconds": latency,
-            "Recall@k": rec_at_k,
-            "Faithfulness": faith_val,
-            "Relevance": rel_val,
-            "Answer": gen_ans
+            "Query":           q,
+            "Expected":        behavior_type,
+            "Actual":          "answer" if did_answer else "abstain",
+            "Correct":         did_answer == should_answer,
+            "Latency_Seconds": round(latency, 2),
+            "Recall@k_Pre":    rec_pre,
+            "Recall@k_Post":   rec_post,
+            "Faithfulness":    faith_val,
+            "Relevance":       rel_val,
+            "Judge_Reasoning": reasoning,
+            "Answer":          gen_ans,
         })
 
-    print(" " * 80, end="\r")
-    print("Elaborazione Completata.")
+    print("\nElaborazione completata.")
 
-    # REPORT FINALE
-    df = pd.DataFrame(results)
+    # Report finale
+    df      = pd.DataFrame(results)
+    metrics = compute_decision_metrics(y_expected, y_actual)
 
-    # Metriche di Decisione (Classificazione)
-    acc = accuracy_score(y_expected, y_actual)
-    prec = precision_score(y_expected, y_actual, zero_division = 0)
-    rec_dec = recall_score(y_expected, y_actual, zero_division = 0)
+    avg_faith    = df["Faithfulness"].mean()
+    avg_rel      = df["Relevance"].mean()
+    avg_rec_pre  = df["Recall@k_Pre"].mean()
+    avg_rec_post = df["Recall@k_Post"].mean()
+    avg_latency  = df["Latency_Seconds"].mean()
 
-    # Metriche di Generazione (Media escludendo i NaN)
-    avg_faith = df["Faithfulness"].mean()
-    avg_rel = df["Relevance"].mean()
-
-    # Metriche di Retrieval
-    avg_rec_at_k = df["Recall@k"].mean()
-
-    # Latency
-    avg_latency = df["Latency_Seconds"].mean()  # Media tempo
-
-    print("\n" + "=" * 50)
-    print(" REPORT ")
-    print("=" * 50)
-    print("--- 1. QUALITÀ DELLA DECISIONE (CRAG Logic) ---")
-    print(f"Avg Latency:         {avg_latency:.2f}")
-    print(f"Abstention Accuracy: {acc:.2%}")
-    print(f"Answering Precision: {prec:.2f}")
-    print(f"Answering Recall:    {rec_dec:.2f}")
-    print("-" * 50)
-    print("--- 2. QUALITÀ DEL TESTO (Solo sulle Risposte) ---")
-    print(f"Avg Faithfulness:    {avg_faith:.2f}/5 (Safety)")
-    print(f"Avg Relevance:       {avg_rel:.2f}/5 (Utility)")
-    print("-" * 50)
+    print("\n" + "=" * 55)
+    print(" REPORT FINALE")
+    print("=" * 55)
+    print("--- 1. QUALITÀ DELLA DECISIONE (CRAG Routing) ---")
+    print(f"  Answer  Accuracy  : {metrics['answer_acc']:.2%}")
+    print(f"  Abstain Accuracy  : {metrics['abstain_acc']:.2%}")
+    print(f"  Balanced Accuracy : {metrics['balanced_acc']:.2%}")
+    print(f"  Precision         : {metrics['precision']:.2f}")
+    print(f"  Recall            : {metrics['recall']:.2f}")
+    print(f"  F1                : {metrics['f1']:.2f}")
+    print(f"  Avg Latency       : {avg_latency:.2f}s")
+    print("--- 2. QUALITÀ DEL TESTO GENERATO (LLM Judge) ---")
+    print(f"  Avg Faithfulness  : {avg_faith:.2f}/5  (anti-allucinazione)")
+    print(f"  Avg Relevance     : {avg_rel:.2f}/5  (utilità)")
     print("--- 3. QUALITÀ DEL RETRIEVAL ---")
-    print(f"Avg Recall@k:        {avg_rec_at_k:.2f}")
-    print("=" * 50)
+    print(f"  Recall@k Pre      : {avg_rec_pre:.2f}  (retriever puro)")
+    print(f"  Recall@k Post     : {avg_rec_post:.2f}  (dopo grading+refinement)")
+    print("=" * 55)
 
     df.to_csv("crag_metrics.csv", index = False)
+    print("\nRisultati salvati in: crag_metrics.csv")
+
 
 if __name__ == "__main__":
     run_benchmark()
