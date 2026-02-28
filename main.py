@@ -12,8 +12,8 @@ def main():
 
     # query tecnica corretta/valida
     #query = "How do I use the VideoEditor class to trim an mp4 file?"
-    #query = "How to load a pre-trained BERT model using from_pretrained?"
-    query = "How do I save a model using save_pretrained?"
+    query = "How to load a pre-trained BERT model using from_pretrained?"
+    #query = "How do I save a model using save_pretrained?"
 
     # query ambigua
     #query = "Explain BERT model architecture"
