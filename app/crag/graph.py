@@ -6,6 +6,7 @@ from app.crag.nodes import (
     grade_documents,
     transform_query,
     corrective_retriever,
+    discard_knowledge,
     generate
 )
 
@@ -18,22 +19,27 @@ def decide_next_node(state: GraphState):
     """
     confidence = state.confidence_score
     retries = state.retry_count
-    threshold = state.confidence_threshold
-    #threshold = getattr(state, "confidence_threshold", 0.60)
+    upper = state.upper_threshold
+    lower = state.lower_threshold
 
-    # 1: Confidenza alta (abbastanza doc Correct/Refined)
-    if confidence >= threshold:
-        print(f"  Confidence High ({confidence:.2f} >= {threshold:.2f}) -> Generating Answer")
+    # Fallback: retry esauriti -> genera best-effort
+    if retries >= MAX_RETRIES:
+        print(f"  Max Retries ({retries}/{MAX_RETRIES}) -> Best-Effort Generation")
         return "generate"
 
-    # 2: Confidenza bassa, retry
-    if retries < MAX_RETRIES:
-        print(f"  Confidence Low ({confidence:.2f} < {threshold:.2f}) -> Corrective Search needed")
-        return "transform_query"
+    # 1. CORRECT: abbastanza evidenza, genera
+    if confidence >= upper:
+        print(f"  CORRECT ({confidence:.2f} >= {upper:.2f}) -> Generate")
+        return "generate"
 
-    # 3: Confidenza bassa, tentativi finiti -> Genera con quello che abbiamo
-    print(f"  Max Retries Reached ({retries} / {MAX_RETRIES}) -> Generating Best-Effort Answer")
-    return "generate"
+    # 2. AMBIGUOUS: qualcosa c'è ma non basta, mantieni k_in + correttivo
+    if confidence >= lower:
+        print(f"  AMBIGUOUS ({lower:.2f} <= {confidence:.2f} < {upper:.2f}) -> Refine + Corrective")
+        return "corrective_ambiguous"
+
+    # 3. INCORRECT: retrieval fallito, scarta e ricerca da zero
+    print(f"  INCORRECT ({confidence:.2f} < {lower:.2f}) -> Discard + Corrective")
+    return "corrective_incorrect"
 
 
 def build_crag_graph():
@@ -47,6 +53,7 @@ def build_crag_graph():
     workflow.add_node("grade_documents", grade_documents)
     workflow.add_node("transform_query", transform_query)
     workflow.add_node("corrective_retriever", corrective_retriever)
+    workflow.add_node("discard_knowledge", discard_knowledge)
     workflow.add_node("generate", generate)
 
     # Define Flow
@@ -59,7 +66,8 @@ def build_crag_graph():
         decide_next_node,
         {
             "generate": "generate",
-            "transform_query": "transform_query"
+            "corrective_ambiguous": "transform_query",
+            "corrective_incorrect": "discard_knowledge"
         }
     )
 
@@ -67,6 +75,9 @@ def build_crag_graph():
     workflow.add_edge("transform_query", "corrective_retriever")
     # I nuovi documenti correttivi devono essere valutati!
     workflow.add_edge("corrective_retriever", "grade_documents")
+
+    # INCORRECT path: discard -> transform -> (si riaggancia al flusso sopra)
+    workflow.add_edge("discard_knowledge", "transform_query")
 
     # Exit
     workflow.add_edge("generate", END)

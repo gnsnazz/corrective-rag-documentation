@@ -6,37 +6,22 @@ def main():
     print("Avvio CRAG...")
 
     app = build_crag_graph()
-
-    # query tecnica corretta/valida
-    #query = "How do I use the VideoEditor class to trim an mp4 file?"
-    query = "How do I load a pre-trained BERT model using AutoModel?"
-
-    #query = "How do I save a model using save_pretrained?"
-
-    # query ambigua
-    #query = "Explain BERT model architecture"
-    #query = "How does T5 handle text-to-text tasks?"
-
-    # query non corretta
-    #query = "asdasd qweqwe transformers banana"
-
-    # query errata
-    #query = "How does the moon affect deep learning?"
+    query = "How do I enable quantum attention in BERT?"
 
     print(f"\n Generazione per: '{query}'...")
 
-    # invoca il workflow CRAG
     result = app.invoke({"question": query})
     content = result.get("generation", "")
+    action = result.get("crag_action", "unknown")
+
+    print(f"\n  CRAG Action: {action.upper()}")
 
     if not content or ABSTENTION_MSG in content:
         print("  Skip: Informazioni non trovate.")
     else:
-        # Salva documentazione generata
         path = save_documentation(content, query)
         print(f"\n Documentazione salvata in: {format_source(path)}")
 
-        # Anteprima contenuto
         print("\n   ANTEPRIMA CONTENUTO GENERATO:")
         print("." * 40)
         print(content)
