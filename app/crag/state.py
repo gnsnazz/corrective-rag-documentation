@@ -30,7 +30,6 @@ class GraphState(BaseModel):
     # Metriche di controllo
     upper_threshold: float = 0.60
     lower_threshold: float = 0.30
-
     confidence_score: float = 0.0
     retry_count: int = 0
     total_docs_examined: int = 0  # Contatore cumulativo di tutti i doc esaminati
@@ -40,3 +39,6 @@ class GraphState(BaseModel):
 
     # Memoria per evitare loop di riscrittura identici
     previous_queries: List[str] = Field(default_factory = list)
+
+    # Timing per nodo
+    node_timings: dict = Field(default_factory = dict)

@@ -3,7 +3,7 @@ import contextlib
 from itertools import product
 from app.crag.graph import build_crag_graph
 from app.config import ABSTENTION_MSG
-from validation_set import validation_queries
+from evaluation.validation_set import validation_queries
 
 
 def test_threshold_pair(app, lower, upper):

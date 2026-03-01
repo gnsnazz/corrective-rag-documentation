@@ -1,55 +1,10 @@
-import os
-from langchain_chroma import Chroma
-from langchain_anthropic import ChatAnthropic
-from langchain_core.output_parsers import StrOutputParser
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from pydantic import BaseModel, Field
-from typing import Literal
 import numpy as np
+from langchain_core.output_parsers import StrOutputParser
 
-from app.embeddings import get_embedding_model
-from app.config import DB_DIR, ABSTENTION_MSG, K_CORRECTIVE, STRIP_SIMILARITY_THRESHOLD, format_source
+from app.config import  ABSTENTION_MSG, K_CORRECTIVE, STRIP_SIMILARITY_THRESHOLD,format_source
 from app.crag.state import GraphState, CragDocument
-
-from app.crag.prompts import (
-    GRADER_SYSTEM_MSG,
-    rewrite_prompt,
-    generate_prompt
-)
-
-# Modello locale
-llm = ChatAnthropic(
-    model_name = "claude-haiku-4-5-20251001", #claude-sonnet-4-5-20250929
-    temperature = 0,
-    timeout = None,
-    stop = None,
-    max_retries = 2
-)
-
-
-class Grade(BaseModel):
-    """Score for relevance check."""
-    score: Literal["correct", "ambiguous", "incorrect"] = Field(
-        description = """Relevance classification: 'correct' (explicit answer), 'ambiguous' (needs refinement),
-         or 'incorrect' (irrelevant)."""
-    )
-
-# Grader strutturato
-llm_grader = llm.with_structured_output(Grade)
-
-# Vector Store
-if not os.path.exists(DB_DIR):
-    raise FileNotFoundError(f"DB non trovato in {DB_DIR}")
-
-embeddings = get_embedding_model()
-vectorstore = Chroma(persist_directory = DB_DIR, embedding_function = embeddings)
-retriever = vectorstore.as_retriever(search_kwargs={"k": 8})
-
-strip_splitter = RecursiveCharacterTextSplitter(
-    chunk_size = 200,
-    chunk_overlap = 20,
-    length_function = len,
-)
+from app.crag.models import llm, llm_grader, embeddings, vectorstore, retriever, strip_splitter
+from app.crag.prompts import GRADER_SYSTEM_MSG, rewrite_prompt, generate_prompt
 
 # --- NODI ---
 def retrieve(state: GraphState):
@@ -152,7 +107,15 @@ def grade_documents(state: GraphState):
 
         # 3. KNOWLEDGE REFINEMENT
         # Il documento è 'correct' o 'ambiguous', applichiamo il Refinement per estrarre strip precisi.
-        print(f"  {score.capitalize()} -> Refining... {src}")
+        if score == "correct":
+            print(f"  Correct -> Accepted as-is: {src}")
+            doc.relevance_score = "correct"
+            current_valid_docs.append(doc)
+            valid_count += 1
+            continue
+
+            # 4. AMBIGUOUS -> Knowledge Refinement
+        print(f"  Ambiguous -> Refining... {src}")
 
         try:
             refined_text = decompose_then_recompose(doc, state.question)
@@ -160,13 +123,10 @@ def grade_documents(state: GraphState):
             print(f"    Error during refinement: {e}")
             continue
 
-        # 4. VALIDAZIONE POST-REFINEMENT
-        # Accetta il documento solo se il Refiner ha estratto contenuto utile
         if refined_text:
             print(f"    Refined Success")
-            # Sovrascrive il contenuto grezzo con quello pulito (Strip)
             doc.page_content = refined_text
-            doc.relevance_score = "refined" # Contrassegnato come refined
+            doc.relevance_score = "refined"
             current_valid_docs.append(doc)
             valid_count += 1
         else:
