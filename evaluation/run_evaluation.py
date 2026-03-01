@@ -5,44 +5,12 @@ import contextlib
 import os
 
 from dotenv import load_dotenv
-from langchain_anthropic import ChatAnthropic
-from langchain_core.prompts import PromptTemplate
-from langchain_core.output_parsers import JsonOutputParser
-from pydantic import BaseModel, Field
 from sklearn.metrics import precision_score, recall_score, f1_score
 from app.crag.graph import build_crag_graph
 from app.config import ABSTENTION_MSG
+from evaluation.judge import evaluate_with_llm
 
 load_dotenv()
-
-class LLMScore(BaseModel):
-    faithfulness:     int = Field(description = "Score 1-5: Is the answer grounded in the context? (1=Hallucination, 5=Fully Supported)")
-    answer_relevance: int = Field(description = "Score 1-5: Does the answer address the user query? (1=Irrelevant, 5=Perfect)")
-    reasoning:        str = Field(description = "Short reasoning for the scores")
-
-llm_judge = ChatAnthropic(
-    model_name  = "claude-haiku-4-5-20251001",
-    temperature = 0,
-    timeout = None,
-    stop = None,
-    max_retries = 2
-)
-
-parser = JsonOutputParser(pydantic_object=LLMScore)
-judge_chain = PromptTemplate(template =
-"""You are an evaluator. Rate the RAG system output.
-
-QUERY: {query}
-RETRIEVED CONTEXT: {context}
-SYSTEM ANSWER: {answer}
-
-Provide scores (1-5) for:
-1. Faithfulness: Is the answer derived ONLY from the context? (1=Hallucination, 5=Fully Supported)
-2. Answer Relevance: Is the answer useful for the query? (1=Irrelevant, 5=Perfect)
-
-{format_instructions}""",
-    input_variables = ["query", "context", "answer"],
-    partial_variables = {"format_instructions": parser.get_format_instructions()}) | llm_judge | parser
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +83,21 @@ test_dataset = [
         "expected_behavior": "abstain",
         "gold_source": None,
     },
+    {
+        "query": "How do I use BertForEntityLinking for named entity disambiguation?",
+        "expected_behavior": "abstain",
+        "gold_source": None,
+    },
+    {
+        "query": "How does Trainer.auto_shard_model() distribute layers across GPUs?",
+        "expected_behavior": "abstain",
+        "gold_source": None,
+    },
+    {
+        "query": "How do I configure the neural_cache parameter in GenerationConfig?",
+        "expected_behavior": "abstain",
+        "gold_source": None,
+    },
 
     # 4. CORRECTIVE / EDGE CASES — Hard Retrieval
     {
@@ -155,15 +138,6 @@ test_dataset = [
         "gold_source": None,
     },
 ]
-
-
-def evaluate_with_llm(query: str, context: str, answer: str) -> LLMScore:
-    try:
-        res = judge_chain.invoke({"query": query, "context": context, "answer": answer})
-        return LLMScore(**res)
-    except Exception as e:
-        print(f"  [WARN] LLM Judge error: {e}")
-        return LLMScore(faithfulness = 1, answer_relevance = 1, reasoning = "Error")
 
 
 def calculate_recall_at_k(docs: list, gold_source: str) -> float:
@@ -217,6 +191,10 @@ def run_benchmark():
     y_actual = []
     total = len(test_dataset)
 
+    # Nodi da tracciare per il timing
+    timing_keys = ["retrieve", "grade_documents", "transform_query",
+                   "corrective_retriever", "discard_knowledge", "generate"]
+
     for i, item in enumerate(test_dataset[:1]):
         q = item["query"]
         behavior_type = item["expected_behavior"]
@@ -230,11 +208,13 @@ def run_benchmark():
             final_state = app.invoke({"question": q})
         latency = time.perf_counter() - start
 
-        gen_ans    = final_state.get("generation", "")
-        k_in       = final_state.get("k_in", [])
-        k_ex       = final_state.get("k_ex", [])
+        gen_ans = final_state.get("generation", "")
+        k_in = final_state.get("k_in", [])
+        k_ex = final_state.get("k_ex", [])
         valid_docs = k_in + k_ex
-        all_docs   = final_state.get("documents", [])  # batch grezzo per Recall@k pre-grading
+        all_docs = final_state.get("documents", [])
+        crag_action = final_state.get("crag_action", "unknown")
+        node_timings = final_state.get("node_timings", {})
 
         # Decisione
         did_abstain   = (ABSTENTION_MSG in gen_ans) or (not valid_docs)
@@ -245,7 +225,8 @@ def run_benchmark():
         y_actual.append(1 if did_answer else 0)
 
         status = "✅" if (did_answer == should_answer) else "❌"
-        print(f"        {status} Expected [{behavior_type}] -> Got [{'answer' if did_answer else 'abstain'}]")
+        print(f"        {status} Expected [{behavior_type}] -> Got [{'answer' if did_answer else 'abstain'}]"
+              f" | Action: {crag_action} | {latency:.1f}s")
 
         # Recall@k pre-grading (retriever puro) e post-grading (dopo grading+refinement)
         rec_pre  = calculate_recall_at_k(all_docs,   gold_src) if gold_src else np.nan
@@ -264,19 +245,26 @@ def run_benchmark():
             rel_val   = scores.answer_relevance
             reasoning = scores.reasoning
 
-        results.append({
-            "Query":           q,
-            "Expected":        behavior_type,
-            "Actual":          "answer" if did_answer else "abstain",
-            "Correct":         did_answer == should_answer,
+        row = {
+            "Query": q,
+            "Expected": behavior_type,
+            "Actual": "answer" if did_answer else "abstain",
+            "Correct": did_answer == should_answer,
+            "CRAG_Action": crag_action,
             "Latency_Seconds": round(latency, 2),
-            "Recall@k_Pre":    rec_pre,
-            "Recall@k_Post":   rec_post,
-            "Faithfulness":    faith_val,
-            "Relevance":       rel_val,
+            "Recall@k_Pre": rec_pre,
+            "Recall@k_Post": rec_post,
+            "Faithfulness": faith_val,
+            "Relevance": rel_val,
             "Judge_Reasoning": reasoning,
-            "Answer":          gen_ans,
-        })
+            "Answer": gen_ans,
+        }
+
+        # Aggiungi colonne timing per ogni nodo
+        for key in timing_keys:
+            row[f"t_{key}"] = round(node_timings.get(key, 0.0), 2)
+
+        results.append(row)
 
     print("\nElaborazione completata.")
 
@@ -293,25 +281,33 @@ def run_benchmark():
     print("\n" + "=" * 55)
     print(" REPORT FINALE")
     print("=" * 55)
-    print("--- 1. QUALITÀ DELLA DECISIONE (CRAG Routing) ---")
+    print("--- QUALITÀ DELLA DECISIONE (CRAG Routing) ---")
     print(f"  Answer  Accuracy  : {metrics['answer_acc']:.2%}")
     print(f"  Abstain Accuracy  : {metrics['abstain_acc']:.2%}")
     print(f"  Balanced Accuracy : {metrics['balanced_acc']:.2%}")
     print(f"  Precision         : {metrics['precision']:.2f}")
     print(f"  Recall            : {metrics['recall']:.2f}")
     print(f"  F1                : {metrics['f1']:.2f}")
-    print(f"  Avg Latency       : {avg_latency:.2f}s")
-    print("--- 2. QUALITÀ DEL TESTO GENERATO (LLM Judge) ---")
+    print("--- QUALITÀ DEL TESTO GENERATO (LLM Judge) ---")
     print(f"  Avg Faithfulness  : {avg_faith:.2f}/5  (anti-allucinazione)")
     print(f"  Avg Relevance     : {avg_rel:.2f}/5  (utilità)")
-    print("--- 3. QUALITÀ DEL RETRIEVAL ---")
+    print("--- QUALITÀ DEL RETRIEVAL ---")
     print(f"  Recall@k Pre      : {avg_rec_pre:.2f}  (retriever puro)")
     print(f"  Recall@k Post     : {avg_rec_post:.2f}  (dopo grading+refinement)")
+
+    print("--- LATENZA ---")
+    print(f"  Avg Totale        : {avg_latency:.2f}s")
+    for key in timing_keys:
+        col = f"t_{key}"
+        if col in df.columns:
+            avg_t = df[col].mean()
+            if avg_t > 0.01:  # Mostra solo nodi che hanno girato
+                pct = (avg_t / avg_latency * 100) if avg_latency > 0 else 0
+                print(f"  Avg {key:<22s}: {avg_t:.2f}s  ({pct:.0f}%)")
     print("=" * 55)
 
     df.to_csv("crag_metrics.csv", index = False)
     print("\nRisultati salvati in: crag_metrics.csv")
-
 
 if __name__ == "__main__":
     run_benchmark()

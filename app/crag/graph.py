@@ -1,8 +1,8 @@
+import time
 from langgraph.graph import END, StateGraph
 from app.crag.state import GraphState
 from app.config import MAX_RETRIES
-from app.crag.nodes import (
-    retrieve,
+from app.crag.nodes import (retrieve,
     grade_documents,
     transform_query,
     corrective_retriever,
@@ -10,12 +10,30 @@ from app.crag.nodes import (
     generate
 )
 
+def timed_node(name: str, fn):
+    """
+    Wrapper che cronometra l'esecuzione di un nodo e accumula il tempo nello stato.
+    Ogni nodo può girare più volte (es. grade_documents nel loop), i tempi si sommano.
+    """
+    def wrapper(state: GraphState):
+        start = time.perf_counter()
+        result = fn(state)
+        elapsed = time.perf_counter() - start
+
+        timings = dict(state.node_timings)
+        timings[name] = timings.get(name, 0.0) + elapsed
+        result["node_timings"] = timings
+        return result
+    return wrapper
+
 def decide_next_node(state: GraphState):
     """
     Logica di Routing CRAG:
-    - High confidence -> answer
-    - Low confidence -> rewrite ONLY if ci sono documenti
-    - Max retries -> answer (best-effort)
+    1. CORRECT (conf >= upper) -> Genera direttamente con i doc raffinati
+    2. AMBIGUOUS (lower <= conf < upper) -> Mantieni k_in + lancia correttivo
+    3. INCORRECT (conf < lower) -> Scarta k_in, lancia solo correttivo
+
+    Fallback: se i retry sono esauriti, genera con quello che abbiamo (best-effort).
     """
     confidence = state.confidence_score
     retries = state.retry_count
@@ -49,12 +67,12 @@ def build_crag_graph():
     workflow = StateGraph(GraphState)
 
     # Add Nodes
-    workflow.add_node("retrieve", retrieve)
-    workflow.add_node("grade_documents", grade_documents)
-    workflow.add_node("transform_query", transform_query)
-    workflow.add_node("corrective_retriever", corrective_retriever)
-    workflow.add_node("discard_knowledge", discard_knowledge)
-    workflow.add_node("generate", generate)
+    workflow.add_node("retrieve", timed_node("retrieve", retrieve))
+    workflow.add_node("grade_documents", timed_node("grade_documents", grade_documents))
+    workflow.add_node("transform_query", timed_node("transform_query", transform_query))
+    workflow.add_node("corrective_retriever", timed_node("corrective_retriever", corrective_retriever))
+    workflow.add_node("discard_knowledge", timed_node("discard_knowledge", discard_knowledge))
+    workflow.add_node("generate", timed_node("generate", generate))
 
     # Define Flow
     workflow.set_entry_point("retrieve")
@@ -73,7 +91,6 @@ def build_crag_graph():
 
     # Loop Correttivo
     workflow.add_edge("transform_query", "corrective_retriever")
-    # I nuovi documenti correttivi devono essere valutati!
     workflow.add_edge("corrective_retriever", "grade_documents")
 
     # INCORRECT path: discard -> transform -> (si riaggancia al flusso sopra)
