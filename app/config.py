@@ -16,7 +16,7 @@ GITHUB_BUGS_PATH = str(BASE_DIR / "data" / "github_bugs.json")
 
 # --- TEMPLATES ---
 TEMPLATES_DIR = str(BASE_DIR / "data" / "templates")
-BUG_FIXES_TEMPLATE = str(BASE_DIR / "data" / "templates" / "techdoc" / "62304" / "bug-fixes-documentation-list.md")
+BUG_FIXES_TEMPLATE = str(BASE_DIR / "templates" / "techdoc" / "62304" / "bug-fixes-documentation-list.md")
 
 # --- INGESTION ---
 ALLOWED_EXTENSIONS = [".py", ".md", ".txt", ".yaml", ".yml", ".cfg", ".toml"]
