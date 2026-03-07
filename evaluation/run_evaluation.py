@@ -173,7 +173,7 @@ def compute_decision_metrics(y_expected: list, y_actual: list) -> dict:
         "balanced_acc": (answer_acc + abstain_acc) / 2,
         "precision": precision_score(y_expected, y_actual, zero_division = 0),
         "recall": recall_score(y_expected, y_actual, zero_division = 0),
-        "f1": f1_score(y_expected, y_actual, zero_division = 0),
+        "f1": f1_score(y_expected, y_actual, zero_division = 0)
     }
 
 
@@ -257,7 +257,7 @@ def run_benchmark():
             "Faithfulness": faith_val,
             "Relevance": rel_val,
             "Judge_Reasoning": reasoning,
-            "Answer": gen_ans,
+            "Answer": gen_ans
         }
 
         # Aggiungi colonne timing per ogni nodo

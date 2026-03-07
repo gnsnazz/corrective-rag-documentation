@@ -1,0 +1,9 @@
+services:
+  crag:
+    build: .
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+      - ./data:/app/data
+    command: python main.py

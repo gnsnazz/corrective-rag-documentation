@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+.env
+.git/
+.gitignore
+output_docs/
+reports/
+data/output/
+data/vectorstore/
+*.csv
