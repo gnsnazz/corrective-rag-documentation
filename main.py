@@ -1,31 +1,38 @@
-from app.crag.graph import build_crag_graph
-from app.utils import save_documentation
-from app.config import ABSTENTION_MSG, format_source
+from app.config import BUG_FIXES_TEMPLATE, GITHUB_BUGS_PATH, OUTPUT_DIR
+from app.template_parser import parse_template, extract_template_fields
+from app.retriever.github_fetcher import load_bugs
+from app.compiler.direct_compiler import process_structured_compliance
+from app.recomposer import recompose_document, save_document, get_output_path
+
 
 def main():
-    print("Avvio CRAG...")
+    print("TEMPLATE COMPILER")
 
-    app = build_crag_graph()
-    query = "How do I enable quantum attention in BERT?"
+    # Analisi Template e Campi
+    template = parse_template(BUG_FIXES_TEMPLATE)
+    template_fields = extract_template_fields(template)
 
-    print(f"\n Generazione per: '{query}'...")
+    if not template_fields:
+        print("Errore: Nessun campo estratto dal template.")
+        return
 
-    result = app.invoke({"question": query})
-    content = result.get("generation", "")
-    action = result.get("crag_action", "unknown")
+    # Estrazione Dati
+    raw_bugs = load_bugs(GITHUB_BUGS_PATH)[:5]
 
-    print(f"\n  CRAG Action: {action.upper()}")
+    if not raw_bugs:
+        return
 
-    if not content or ABSTENTION_MSG in content:
-        print("  Skip: Informazioni non trovate.")
-    else:
-        path = save_documentation(content, query)
-        print(f"\n Documentazione salvata in: {format_source(path)}")
+    # Processamento Core (LLM)
+    compiled_document = process_structured_compliance(template, template_fields, raw_bugs)
 
-        print("\n   ANTEPRIMA CONTENUTO GENERATO:")
-        print("." * 40)
-        print(content)
-        print("." * 40)
+    # Ricomposizione e Salvataggio
+    print("\nGenerazione report Markdown finale in corso...")
+    final_markdown = recompose_document(compiled_document)
+
+    output_path = get_output_path(template, OUTPUT_DIR)
+    save_document(final_markdown, output_path)
+
+    print("\nCompilazione completata con successo!")
 
 if __name__ == "__main__":
     main()

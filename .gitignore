@@ -28,6 +28,8 @@ data/
 vectorstore/
 data/vectorstore/
 data/documents/
+reports
+reports/
 
 # --- MODELS / EMBEDDINGS ---
 *.bin
