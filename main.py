@@ -17,7 +17,7 @@ def main():
         return
 
     # Estrazione Dati
-    raw_bugs = load_bugs(GITHUB_BUGS_PATH)[:5]
+    raw_bugs = load_bugs(GITHUB_BUGS_PATH)[:7]
 
     if not raw_bugs:
         return

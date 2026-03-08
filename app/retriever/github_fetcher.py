@@ -62,7 +62,7 @@ def fetch_bugs(owner: str, repo: str, state: str = "all", label: str = "bug", pe
             "direction": "desc"
         }
 
-        response = requests.get(url, params=params, headers = get_headers())
+        response = requests.get(url, params = params, headers = get_headers())
 
         if response.status_code != 200:
             print(f"Errore API: {response.status_code} - {response.text}")
@@ -137,7 +137,6 @@ def format_bug_as_context(bug: dict) -> str:
     """
     return json.dumps(bug, indent = 2)
 
-# --- MAIN ---
 if __name__ == "__main__":
 
     bugs = fetch_bugs(REPO_OWNER, REPO_NAME, state = "all")
