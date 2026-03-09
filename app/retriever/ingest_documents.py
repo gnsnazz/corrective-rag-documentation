@@ -4,13 +4,13 @@ import shutil
 from langchain_chroma import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
-from embeddings import get_embedding_model
-from config import DB_DIR, REPO_PATH
+from app.embeddings import get_embedding_model
+from app.config import DB_DIR, PROJECT_PATH
 
 def load_documents():
     """Carica i documenti Markdown dalla directory."""
     loader = DirectoryLoader(
-        REPO_PATH,
+        PROJECT_PATH,
         glob = "**/*.md",
         loader_cls = TextLoader,
         loader_kwargs = {"encoding": "utf-8", "autodetect_encoding": True},

@@ -28,6 +28,7 @@ data/
 vectorstore/
 data/vectorstore/
 data/documents/
+reports/
 
 # --- MODELS / EMBEDDINGS ---
 *.bin
@@ -47,4 +48,5 @@ data/documents/
 output_docs/
 *.md
 !README.md
+!templates/**/*.md
 *.csv

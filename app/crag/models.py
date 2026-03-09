@@ -28,16 +28,14 @@ class Grade(BaseModel):
 llm_grader = llm.with_structured_output(Grade)
 
 # --- VECTOR STORE ---
-if not os.path.exists(DB_DIR):
-    raise FileNotFoundError(f"DB non trovato in {DB_DIR}")
-
-embeddings = get_embedding_model()
-vectorstore = Chroma(persist_directory = DB_DIR, embedding_function = embeddings)
-retriever = vectorstore.as_retriever(search_kwargs = {"k": 8})
+if os.path.exists(DB_DIR):
+    embeddings = get_embedding_model()
+    vectorstore = Chroma(persist_directory = DB_DIR, embedding_function = embeddings)
+    retriever = vectorstore.as_retriever(search_kwargs = {"k": 8})
 
 # --- STRIP SPLITTER (Knowledge Refinement) ---
 strip_splitter = RecursiveCharacterTextSplitter(
     chunk_size = 200,
     chunk_overlap = 20,
-    length_function = len,
+    length_function = len
 )
