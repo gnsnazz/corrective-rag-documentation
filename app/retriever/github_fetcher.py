@@ -131,11 +131,26 @@ def load_bugs(json_path: str) -> list[dict]:
     print(f"Caricati {len(bugs)} bug da {os.path.relpath(json_path)}")
     return bugs
 
+
 def format_bug_as_context(bug: dict) -> str:
     """
-    Formatta il dizionario del bug in una stringa di contesto per l'LLM.
+    Formatta il record in testo strutturato per l'LLM.
+    Appiattisce le strutture annidate per ridurre il rumore.
     """
-    return json.dumps(bug, indent = 2)
+    lines = []
+    for key, value in bug.items():
+        if isinstance(value, list) and value and isinstance(value[0], dict):
+            # Lista di oggetti (es. commenti) → appiattisci
+            lines.append(f"\n{key.upper()}:")
+            for i, item in enumerate(value, 1):
+                for k, v in item.items():
+                    lines.append(f"  [{i}] {k}: {v}")
+        elif isinstance(value, list):
+            lines.append(f"{key}: {', '.join(str(v) for v in value)}")
+        else:
+            lines.append(f"{key}: {value}")
+
+    return "\n".join(lines)
 
 if __name__ == "__main__":
 
