@@ -40,7 +40,7 @@ def _detect_section_type(content: str) -> tuple[str, list[str]]:
         and not l.strip().startswith("---")
         and not l.strip().startswith("```")
     ]
-    has_prose = len(prose_lines) >= 2
+    has_prose = len(prose_lines) >= 2 and len(prose_lines) > len(table_lines)
 
     # Estrae headers tabella
     table_headers = []
