@@ -210,8 +210,7 @@ def recompose_document(compiled: CompiledDocument) -> str:
     return "\n".join(lines)
 
 def format_sources(sources: list[str]) -> list[str]:
-    names = [Path(src).name for src in sources]
-    return ["*Fonti:*", "", " | ".join(names), ""]
+    return ["*Fonti:*", "", " | ".join(sources), ""]
 
 def save_document(content: str, output_path: str) -> None:
     """Salva il documento Markdown."""

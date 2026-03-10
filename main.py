@@ -16,7 +16,7 @@ def run_bug_fixes():
         print("Errore: Nessun campo estratto dal template.")
         return
 
-    raw_bugs = load_bugs(GITHUB_BUGS_PATH)[:20]
+    raw_bugs = load_bugs(GITHUB_BUGS_PATH)[:7]
     if not raw_bugs:
         return
 
@@ -31,7 +31,7 @@ def run_bug_fixes():
 
 
 def run_requirements():
-    print("Software Requirements (CRAG) ===")
+    print("Software Requirements (CRAG)")
 
     template = parse_template(REQUIREMENTS_TEMPLATE)
     template_fields = extract_template_fields(template)

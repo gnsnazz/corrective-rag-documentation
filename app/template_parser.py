@@ -248,6 +248,9 @@ def extract_template_fields(template: ParsedTemplate) -> list[str]:
         else:
             fields = [r[0] for r in rows if len(r) >= 2]
 
+        if len(fields) <= 2:
+            continue
+
         # Preferisce column-fields su row-fields, poi prende il più lungo
         if (is_column_fields and not best_is_column) or \
                 (is_column_fields == best_is_column and len(fields) > len(best_fields)):
