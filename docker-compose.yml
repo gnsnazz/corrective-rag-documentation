@@ -6,4 +6,11 @@ services:
     volumes:
       - .:/app
       - ./data:/app/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     command: python main.py
