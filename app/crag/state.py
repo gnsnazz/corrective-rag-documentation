@@ -42,3 +42,4 @@ class GraphState(BaseModel):
 
     # Timing per nodo
     node_timings: dict = Field(default_factory = dict)
+    template_fields: Optional[list[str]] = None
