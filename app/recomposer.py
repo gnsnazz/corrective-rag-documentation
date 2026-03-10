@@ -163,14 +163,18 @@ def recompose_document(compiled: CompiledDocument) -> str:
     lines.append("---")
     lines.append("")
 
-    # --- TABELLA TRASPOSTA (se tutte le sezioni sono di tipo table) ---
+
     all_table = all(s.section.section_type == "table" for s in compiled.sections)
     section_title = next(
         (s.title for s in compiled.template.sections
-         if s.section_type == "table" and s.title != compiled.template.title),
-        compiled.template.title
+         if s.section_type == "mixed" and s.title != compiled.template.title),
+        next(
+            (s.title for s in compiled.template.sections
+             if s.section_type == "table" and s.title != compiled.template.title),
+            compiled.template.title
+        )
     )
-
+    # Tabella trasposta (se tutte le sezioni sono di tipo table)
     if all_table and compiled.sections:
         lines.append(f"## {section_title}")
         lines.append("")
@@ -184,13 +188,11 @@ def recompose_document(compiled: CompiledDocument) -> str:
                 if src and src not in all_sources:
                     all_sources.append(src)
         if all_sources:
-            lines.append(f"*Fonti: {', '.join(all_sources)}*")
-            lines.append("")
+            lines.extend(format_sources(all_sources))
 
     else:
         # --- FALLBACK: sezioni separate (comportamento originale) ---
         for compiled_section in compiled.sections:
-            lines.append(f"## {section_title}")
             lines.append(f"## {section_title}")
             lines.append("")
 
@@ -203,11 +205,13 @@ def recompose_document(compiled: CompiledDocument) -> str:
                 lines.append("")
 
             if compiled_section.sources:
-                lines.append(f"*Fonti: {', '.join(compiled_section.sources)}*")
-                lines.append("")
+                lines.extend(format_sources(compiled_section.sources))
 
     return "\n".join(lines)
 
+def format_sources(sources: list[str]) -> list[str]:
+    names = [Path(src).name for src in sources]
+    return ["*Fonti:*", "", " | ".join(names), ""]
 
 def save_document(content: str, output_path: str) -> None:
     """Salva il documento Markdown."""
@@ -221,4 +225,5 @@ def get_output_path(template: ParsedTemplate, output_dir: str) -> str:
     stem = Path(template.file_name).stem
     date_str = datetime.now().strftime("%Y%m%d")
     filename = f"{stem}_compiled_{date_str}.md"
+    print(f"Output path: {str(Path(output_dir) / filename)}")
     return str(Path(output_dir) / filename)

@@ -222,48 +222,37 @@ def parse_template(template_path: str) -> ParsedTemplate:
 
 
 def extract_template_fields(template: ParsedTemplate) -> list[str]:
-    """
-    Estrae i campi dal template rilevando automaticamente
-    il tipo di tabella (row-fields o column-fields).
-    """
     best_fields = []
+    best_is_column = False
 
     for section in template.sections:
         if section.section_type not in ["table", "mixed"]:
             continue
 
         lines = [l.strip() for l in section.content.split("\n") if l.strip().startswith("|")]
-
         if len(lines) < 2:
             continue
 
-        rows = [ [c.strip() for c in line.split("|") if c.strip()] for line in lines ]
+        rows = [[c.strip() for c in line.split("|") if c.strip()] for line in lines]
+        rows = [r for r in rows if not all(set(cell) <= set("-: ") for cell in r)]
+        if not rows:
+            continue
+
         num_rows = len(rows)
         num_cols = max(len(r) for r in rows)
 
-        # CASE 1: Row-fields table
-        if num_rows > num_cols:
-            fields = []
-            for r in rows:
-                if len(r) < 2:
-                    continue
+        is_column_fields = num_cols >= num_rows
 
-                field = r[0]
-
-                if set(field) == {"-", ":"}:
-                    continue
-
-                fields.append(field)
-
-            #if len(fields) > 1:
-                #fields = fields[1:]
-
-        # CASE 2: Column-fields table
-        else:
+        if is_column_fields:
             fields = rows[0]
+        else:
+            fields = [r[0] for r in rows if len(r) >= 2]
 
-        if len(fields) > len(best_fields):
+        # Preferisce column-fields su row-fields, poi prende il più lungo
+        if (is_column_fields and not best_is_column) or \
+                (is_column_fields == best_is_column and len(fields) > len(best_fields)):
             best_fields = fields
+            best_is_column = is_column_fields
 
     return best_fields
 
