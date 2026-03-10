@@ -4,7 +4,7 @@ from langchain_core.output_parsers import StrOutputParser
 from app.config import  ABSTENTION_MSG, K_CORRECTIVE, STRIP_SIMILARITY_THRESHOLD,format_source
 from app.crag.state import GraphState, CragDocument
 from app.crag.models import llm, llm_grader, embeddings, vectorstore, retriever, strip_splitter
-from app.crag.prompts import GRADER_SYSTEM_MSG, rewrite_prompt, generate_prompt
+from app.crag.prompts import GRADER_SYSTEM_MSG, rewrite_prompt, generate_prompt, requirements_generate_prompt
 
 # --- NODI ---
 def retrieve(state: GraphState):
@@ -242,9 +242,8 @@ def generate(state: GraphState):
     print("\n   [5] ANSWER GENERATOR")
 
     # Unione delle conoscenze per il generatore
-    k_in_docs = getattr(state, "k_in", []) or []
-    k_ex_docs = getattr(state, "k_ex", []) or []
-    all_docs = k_in_docs + k_ex_docs
+
+    all_docs = state.k_in + state.k_ex
 
     # Controllo finale
     # Se il Grader (Evaluator) ha scartato tutto, non si delega all'LLM.
@@ -254,24 +253,32 @@ def generate(state: GraphState):
 
     context_parts = []
 
-    if k_in_docs:
+    if state.k_in:
         context_parts.append("--- INTERNAL KNOWLEDGE ---")
-        for d in k_in_docs:
+        for d in state.k_in:
             safe_content = d.page_content.replace("<context>", "").replace("</context>", "")
             context_parts.append(safe_content)
 
-    if k_ex_docs:
+    if state.k_ex:
         context_parts.append("\n--- EXTENDED KNOWLEDGE ---")
-        for d in k_ex_docs:
+        for d in state.k_ex:
             safe_content = d.page_content.replace("<context>", "").replace("</context>", "")
             context_parts.append(safe_content)
 
     context = "\n\n".join(context_parts)
 
-    chain = generate_prompt | llm | StrOutputParser()
-    response = chain.invoke({
-        "context": context,
-        "question": state.question
-    })
+    if state.template_fields:
+        fields_list_str = "\n".join([f"- {f}" for f in state.template_fields])
+        chain = requirements_generate_prompt | llm | StrOutputParser()
+        response = chain.invoke({
+            "template_fields": fields_list_str,
+            "context": context
+        })
+    else:
+        chain = generate_prompt | llm | StrOutputParser()
+        response = chain.invoke({
+            "context": context,
+            "question": state.question
+        })
 
     return {"generation": str(response)}
