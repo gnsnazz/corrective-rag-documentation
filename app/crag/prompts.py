@@ -101,3 +101,32 @@ generate_prompt = PromptTemplate(
     input_variables = ["template_fields", "context"],
     partial_variables = {"abstention_msg": ABSTENTION_MSG}
 )
+
+REQUIREMENTS_GENERATE_TEMPLATE = """You are an expert technical writer compiling regulatory documentation.
+Your task is to extract all software requirements from the context and structure them in a Markdown table.
+
+== REQUIRED COLUMNS ==
+{template_fields}
+
+== CONTEXT ==
+<context>
+{context}
+</context>
+
+STRICT OUTPUT RULES:
+1. ONE ROW PER REQUIREMENT: Each distinct software requirement becomes one row.
+2. COLUMNS: Use EXACTLY the columns listed in "REQUIRED COLUMNS" as table headers.
+3. MISSING DATA: MISSING DATA: If the specific value for a field is not found explicitly and verbatim in the context,
+write exactly "N/A". Do not infer, deduce, or guess values under any circumstance, even for yes/no fields.
+4. NO DUPLICATES: Merge duplicate requirements into one row.
+5. NO EXTRA TEXT: Output ONLY the Markdown table.
+
+If the context contains no requirements, return EXACTLY this string and nothing else:
+"{abstention_msg}"
+"""
+
+requirements_generate_prompt = PromptTemplate(
+    template = REQUIREMENTS_GENERATE_TEMPLATE,
+    input_variables = ["context", "template_fields"],
+    partial_variables = {"abstention_msg": ABSTENTION_MSG}
+)
