@@ -72,8 +72,20 @@ rewrite_prompt = PromptTemplate(
     input_variables = ["question", "history"]
 )
 
-# --- 4. GENERATOR PROMPT ---
-GENERATE_PROMPT = """You are an expert technical writer compiling regulatory documentation.
+# 4. --- GENERATOR PROMPTS ---
+# Tre prompt distinti con responsabilità chiare:
+#
+# bug_generate_prompt — Caso 1 (Bug Fixes, direct_compiler)
+# Produce tabella | Field | Value | per un singolo record.
+#
+# extract_table_prompt — Caso 2 (Requirements, crag_compiler)
+# Produce tabella multi-colonna da corpus non strutturato.
+#
+# qa_prompt — Valutazione generica (run_evaluation, nodes.py branch else)
+# Risposta libera a domanda senza template fields.
+
+# --- Caso 1: Bug Fixes ---
+BUG_GENERATE_TEMPLATE = """You are an expert technical writer compiling regulatory documentation.
 Your task is to extract data from the <context> and map it EXACTLY to the requested fields.
 
 == REQUIRED FIELDS ==
@@ -95,13 +107,14 @@ If the <context> is completely empty, return EXACTLY this string and nothing els
 "{abstention_msg}"
 """
 
-generate_prompt = PromptTemplate(
-    template = GENERATE_PROMPT,
+bug_generate_prompt = PromptTemplate(
+    template = BUG_GENERATE_TEMPLATE,
     input_variables = ["template_fields", "context"],
     partial_variables = {"abstention_msg": ABSTENTION_MSG}
 )
 
-REQUIREMENTS_GENERATE_TEMPLATE = """You are an expert technical writer compiling regulatory documentation.
+# --- Caso 2: Software Requirements ---
+EXTRACT_TABLE_PROMPT = """You are an expert technical writer compiling regulatory documentation.
 Your task is to extract all software requirements from the context and structure them in a Markdown table.
 
 == REQUIRED COLUMNS ==
@@ -115,7 +128,7 @@ Your task is to extract all software requirements from the context and structure
 STRICT OUTPUT RULES:
 1. ONE ROW PER REQUIREMENT: Each distinct software requirement becomes one row.
 2. COLUMNS: Use EXACTLY the columns listed in "REQUIRED COLUMNS" as table headers.
-3. MISSING DATA: If a value cannot be reasonably derived from the context, write exactly "N/A". 
+3. MISSING DATA: If a value cannot be reasonably derived from the context, write exactly "N/A".
    Extract only requirements explicitly stated or clearly described in the context.
    Do NOT infer, deduce, or add information not present in the provided text.
 4. NO DUPLICATES: Merge duplicate requirements into one row.
@@ -125,8 +138,33 @@ If the context contains no requirements, return EXACTLY this string and nothing 
 "{abstention_msg}"
 """
 
-requirements_generate_prompt = PromptTemplate(
-    template = REQUIREMENTS_GENERATE_TEMPLATE,
+extract_table_prompt = PromptTemplate(
+    template = EXTRACT_TABLE_PROMPT,
     input_variables = ["context", "template_fields"],
+    partial_variables = {"abstention_msg": ABSTENTION_MSG}
+)
+
+# --- Valutazione generica (run_evaluation) ---
+QA_TEMPLATE = """You are a technical documentation assistant.
+Answer the following question based ONLY on the provided context.
+
+== QUESTION ==
+{question}
+
+== CONTEXT ==
+<context>
+{context}
+</context>
+
+RULES:
+1. Answer ONLY based on the context provided. Do not use prior knowledge.
+2. Be concise and precise.
+3. If the context does not contain sufficient information to answer, return EXACTLY this string and nothing else:
+"{abstention_msg}"
+"""
+
+qa_prompt = PromptTemplate(
+    template = QA_TEMPLATE,
+    input_variables = ["question", "context"],
     partial_variables = {"abstention_msg": ABSTENTION_MSG}
 )
