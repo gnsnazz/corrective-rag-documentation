@@ -20,6 +20,9 @@ class GraphState(BaseModel):
     """
     question: str
     generation: Optional[str] = None
+    # Testo grezzo dei chunk usati per la generazione finale
+    context: str = ""
+
     # Documenti attualmente sotto esame (batch corrente)
     documents: List[CragDocument] = Field(default_factory = list)
     # Accumulatore di documenti validi (Correct + Refined)
@@ -42,3 +45,5 @@ class GraphState(BaseModel):
 
     # Timing per nodo
     node_timings: dict = Field(default_factory = dict)
+    # Campi del template da compilare (iniettati dal compiler)
+    template_fields: Optional[list[str]] = None

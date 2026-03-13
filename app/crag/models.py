@@ -32,6 +32,10 @@ if os.path.exists(DB_DIR):
     embeddings = get_embedding_model()
     vectorstore = Chroma(persist_directory = DB_DIR, embedding_function = embeddings)
     retriever = vectorstore.as_retriever(search_kwargs = {"k": 8})
+else:
+    embeddings = None
+    vectorstore = None
+    retriever = None
 
 # --- STRIP SPLITTER (Knowledge Refinement) ---
 strip_splitter = RecursiveCharacterTextSplitter(

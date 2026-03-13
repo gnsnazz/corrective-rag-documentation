@@ -17,6 +17,7 @@ GITHUB_BUGS_PATH = str(BASE_DIR / "data" / "github_bugs.json")
 # --- TEMPLATES ---
 TEMPLATES_DIR = str(BASE_DIR / "data" / "templates")
 BUG_FIXES_TEMPLATE = str(BASE_DIR / "templates" / "techdoc" / "62304" / "bug-fixes-documentation-list.md")
+REQUIREMENTS_TEMPLATE = str(BASE_DIR / "templates" / "techdoc" / "62304" / "software-requirements-list.md")
 
 # --- INGESTION ---
 ALLOWED_EXTENSIONS = [".py", ".md", ".txt", ".yaml", ".yml", ".cfg", ".toml"]
@@ -32,11 +33,11 @@ def format_source(path: str) -> str:
     return os.path.basename(path) if path else "unknown"
 
 # --- PARAMETRI CRAG ---
-MAX_RETRIES = 1
+MAX_RETRIES = 2
 K_CORRECTIVE = 10
 
 STRIP_SIMILARITY_THRESHOLD = 0.50
 
 # --- SOGLIE CRAG ---
-CONFIDENCE_UPPER = 0.60
+CONFIDENCE_UPPER = 0.55
 CONFIDENCE_LOWER = 0.30
