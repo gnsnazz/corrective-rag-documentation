@@ -15,6 +15,7 @@ class CompiledSection:
     generated_content: str
     is_abstention: bool = False         # True se il CRAG non ha trovato dati
     sources: list[str] = None           # file sorgente usati
+    context: str = ""                   # testo grezzo dei chunk recuperati
 
     def __post_init__(self):
         if self.sources is None:
@@ -50,11 +51,11 @@ def sanitize_content(text: str) -> str:
                   "", text, flags=re.IGNORECASE)
 
     # 4. Rimuove righe che sono pura istruzione (iniziano con keyword tipiche)
-    cleaned_lines = []
     instruction_markers = [
         "describe here", "list here", "enter here", "specify here",
         "fill in", "add here", "update this", "note:", "todo:",
     ]
+    cleaned_lines = []
     for line in text.split("\n"):
         stripped = line.strip().lower()
         if any(stripped.startswith(marker) for marker in instruction_markers):
@@ -82,7 +83,6 @@ def parse_field_value_table(markdown_text: str) -> dict[str, str]:
         if len(parts) < 2:
             continue
         field, value = parts[0], parts[1]
-        # Salta header e separatori
         if field.lower() in ("field", "") or set(field) <= set("-: "):
             continue
         result[field] = value
@@ -92,10 +92,9 @@ def parse_field_value_table(markdown_text: str) -> dict[str, str]:
 def recompose_transposed_table(compiled_sections: list) -> str:
     """
     Assembla una tabella Markdown trasposta rispetto al template OpenRegulatory:
-    - righe   = record
+    - righe = record
     - colonne = campi
     """
-    # Estrae dati da ogni sezione
     records: list[tuple[str, dict]] = []
     for cs in compiled_sections:
         if cs.is_abstention:
@@ -104,7 +103,7 @@ def recompose_transposed_table(compiled_sections: list) -> str:
             clean = sanitize_content(cs.generated_content)
             records.append((cs.section.title, parse_field_value_table(clean)))
 
-    # Raccoglie l'unione ordinata dei campi (preservando l'ordine di prima apparizione)
+    # Unione ordinata dei campi (preserva ordine di prima apparizione)
     seen_fields: list[str] = []
     for _, data in records:
         for field in data:
@@ -114,7 +113,6 @@ def recompose_transposed_table(compiled_sections: list) -> str:
     if not seen_fields:
         return "*Nessun dato strutturato trovato nelle sezioni.*"
 
-    # Intestazione: solo i campi come colonne
     col_headers = [f"**{field}**" for field in seen_fields]
     separator   = ["---"] * len(col_headers)
 
@@ -123,15 +121,23 @@ def recompose_transposed_table(compiled_sections: list) -> str:
         row = [data.get(field, "N/A") for field in seen_fields]
         rows.append(row)
 
-    # Serializza in Markdown
     return "\n".join("| " + " | ".join(row) + " |" for row in rows)
 
 
-def recompose_document(compiled: CompiledDocument) -> str:
+def format_sources(sources: list[str]) -> list[str]:
+    """Formatta la lista delle fonti in Markdown. Restituisce [] se vuota."""
+    if not sources:
+        return []
+    return ["*Fonti:*", "", " | ".join(sources), ""]
+
+
+def recompose_document(compiled: CompiledDocument, transposed: bool = False) -> str:
     """
     Assembla un documento Markdown finale dalle sezioni compilate.
-    Quando tutte le sezioni sono di tipo 'table', produce una tabella trasposta
-    unica.
+
+    Args:
+        compiled: il documento compilato con tutte le sezioni
+        transposed: True  → Caso 1: tabella trasposta unica, False → Caso 2: sezioni separate
     """
     # --- HEADER ---
     lines = [
@@ -148,8 +154,8 @@ def recompose_document(compiled: CompiledDocument) -> str:
     ]
 
     # --- RIEPILOGO COMPLETEZZA ---
-    total = len(compiled.sections)
-    filled = sum(1 for s in compiled.sections if not s.is_abstention)
+    total     = len(compiled.sections)
+    filled    = sum(1 for s in compiled.sections if not s.is_abstention)
     abstained = total - filled
 
     lines.append("---")
@@ -163,54 +169,42 @@ def recompose_document(compiled: CompiledDocument) -> str:
     lines.append("---")
     lines.append("")
 
+    # Titolo della sezione target (sfrutta il nuovo campo in ParsedTemplate)
+    target_section = compiled.template.target_table_section
+    section_title  = target_section.title if target_section else compiled.template.title
 
-    all_table = all(s.section.section_type == "table" for s in compiled.sections)
-    section_title = next(
-        (s.title for s in compiled.template.sections
-         if s.section_type == "mixed" and s.title != compiled.template.title),
-        next(
-            (s.title for s in compiled.template.sections
-             if s.section_type == "table" and s.title != compiled.template.title),
-            compiled.template.title
-        )
-    )
-    # Tabella trasposta (se tutte le sezioni sono di tipo table)
-    if all_table and compiled.sections:
+    # --- CASO 1: tabella trasposta unica ---
+    if transposed and compiled.sections:
         lines.append(f"## {section_title}")
         lines.append("")
         lines.append(recompose_transposed_table(compiled.sections))
         lines.append("")
 
         # Fonti aggregate in fondo
-        all_sources = []
+        all_sources: list[str] = []
         for cs in compiled.sections:
             for src in (cs.sources or []):
                 if src and src not in all_sources:
                     all_sources.append(src)
-        if all_sources:
-            lines.extend(format_sources(all_sources))
+        lines.extend(format_sources(all_sources))
 
+    # --- CASO 2: sezioni separate ---
     else:
-        # --- FALLBACK: sezioni separate (comportamento originale) ---
-        for compiled_section in compiled.sections:
-            lines.append(f"## {section_title}")
+        for cs in compiled.sections:
+            lines.append(f"## {cs.section.title}")
             lines.append("")
 
-            if compiled_section.is_abstention:
+            if cs.is_abstention:
                 lines.append(f"> **[INFORMAZIONE NON DISPONIBILE]** {ABSTENTION_MSG}")
                 lines.append("")
             else:
-                clean_content = sanitize_content(compiled_section.generated_content)
-                lines.append(clean_content)
+                lines.append(sanitize_content(cs.generated_content))
                 lines.append("")
 
-            if compiled_section.sources:
-                lines.extend(format_sources(compiled_section.sources))
+            lines.extend(format_sources(cs.sources or []))
 
     return "\n".join(lines)
 
-def format_sources(sources: list[str]) -> list[str]:
-    return ["*Fonti:*", "", " | ".join(sources), ""]
 
 def save_document(content: str, output_path: str) -> None:
     """Salva il documento Markdown."""
