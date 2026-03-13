@@ -93,8 +93,7 @@ STRICT OUTPUT RULES:
 
 If the <context> is completely empty, return EXACTLY this string and nothing else:
 "{abstention_msg}"
-
-Table:"""
+"""
 
 generate_prompt = PromptTemplate(
     template = GENERATE_PROMPT,
@@ -116,8 +115,9 @@ Your task is to extract all software requirements from the context and structure
 STRICT OUTPUT RULES:
 1. ONE ROW PER REQUIREMENT: Each distinct software requirement becomes one row.
 2. COLUMNS: Use EXACTLY the columns listed in "REQUIRED COLUMNS" as table headers.
-3. MISSING DATA: MISSING DATA: If the specific value for a field is not found explicitly and verbatim in the context,
-write exactly "N/A". Do not infer, deduce, or guess values under any circumstance, even for yes/no fields.
+3. MISSING DATA: If a value cannot be reasonably derived from the context, write exactly "N/A". 
+   Extract only requirements explicitly stated or clearly described in the context.
+   Do NOT infer, deduce, or add information not present in the provided text.
 4. NO DUPLICATES: Merge duplicate requirements into one row.
 5. NO EXTRA TEXT: Output ONLY the Markdown table.
 

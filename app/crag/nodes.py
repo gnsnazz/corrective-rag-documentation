@@ -99,14 +99,13 @@ def grade_documents(state: GraphState):
         score = grade.score.lower()
         src = format_source(doc.metadata.get('source', ''))
 
-        # 2. LOGICA
+        # 2. INCORRECT — scarta
         if score == "incorrect":
             print(f"  Incorrect: {src}")
             doc.relevance_score = "incorrect"
             continue  # Passa al prossimo documento
 
-        # 3. KNOWLEDGE REFINEMENT
-        # Il documento è 'correct' o 'ambiguous', applichiamo il Refinement per estrarre strip precisi.
+        # 3. CORRECT — accetta as-is
         if score == "correct":
             print(f"  Correct -> Accepted as-is: {src}")
             doc.relevance_score = "correct"
@@ -114,7 +113,8 @@ def grade_documents(state: GraphState):
             valid_count += 1
             continue
 
-            # 4. AMBIGUOUS -> Knowledge Refinement
+        # 4. AMBIGUOUS -> Knowledge Refinement
+        # Il documento è 'ambiguous', applichiamo il Refinement per estrarre strip precisi.
         print(f"  Ambiguous -> Refining... {src}")
 
         try:
@@ -214,7 +214,14 @@ def corrective_retriever(state: GraphState):
     print("\n   [4] CORRECTIVE RETRIEVER")
 
     # k leggermente più alto per cercare più a fondo
-    corrective = vectorstore.as_retriever(search_kwargs = {"k": K_CORRECTIVE})
+    corrective = vectorstore.as_retriever(
+        search_type = "mmr",
+        search_kwargs = {
+            "k": K_CORRECTIVE,
+            "fetch_k": K_CORRECTIVE * 3,  # pool da cui MMR sceglie
+            "lambda_mult": 0.7  # 0 = max diversità, 1 = max similarità
+        }
+    )
     raw_docs = corrective.invoke(state.question)
 
     crag_docs = [
@@ -242,14 +249,13 @@ def generate(state: GraphState):
     print("\n   [5] ANSWER GENERATOR")
 
     # Unione delle conoscenze per il generatore
-
     all_docs = state.k_in + state.k_ex
 
     # Controllo finale
     # Se il Grader (Evaluator) ha scartato tutto, non si delega all'LLM.
     if not all_docs:
         print("   HARD STOP: Nessuna evidenza valida trovata -> Astensione.")
-        return {"generation": ABSTENTION_MSG}
+        return {"generation": ABSTENTION_MSG, "context": ""}
 
     context_parts = []
 
@@ -281,4 +287,4 @@ def generate(state: GraphState):
             "question": state.question
         })
 
-    return {"generation": str(response)}
+    return {"generation": str(response), "context": context}
