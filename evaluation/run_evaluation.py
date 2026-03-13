@@ -1,147 +1,28 @@
-import pandas as pd
+import os
+import contextlib
 import time
 import numpy as np
-import contextlib
-import os
+import pandas as pd
 
-from dotenv import load_dotenv
 from sklearn.metrics import precision_score, recall_score, f1_score
 from app.crag.graph import build_crag_graph
 from app.config import ABSTENTION_MSG
 from evaluation.judge import evaluate_with_llm
+from evaluation.datasets import monai_dataset
 
-load_dotenv()
 
-
-# ---------------------------------------------------------------------------
-# GOLD SET — CRAG Evaluation Dataset
-# Repository: transformers/docs/source/en
-# ---------------------------------------------------------------------------
-test_dataset = [
-    # 1. INTEGRITY — Base Facts & API Usage
-    {
-        "query": "How do I load a pre-trained BERT model using AutoModel?",
-        "expected_behavior": "answer",
-        "gold_source": "bert.md",
-    },
-    {
-        "query": "Which class should be used for sequence classification with BERT?",
-        "expected_behavior": "answer",
-        "gold_source": "bert.md",
-    },
-    {
-        "query": "What is the purpose of the attention_mask returned by the tokenizer?",
-        "expected_behavior": "answer",
-        "gold_source": "tokenizer.md",
-    },
-    {
-        "query": "How do I save a fine-tuned model locally?",
-        "expected_behavior": "answer",
-        "gold_source": "training.md",
-    },
-
-    # 2. REASONING & AMBIGUITY — Similar Concepts
-    {
-        "query": "What is the difference between BertModel and BertForMaskedLM?",
-        "expected_behavior": "answer",
-        "gold_source": "bert.md",
-    },
-    {
-        "query": "When should I use AutoModel instead of a task-specific model?",
-        "expected_behavior": "answer",
-        "gold_source": "auto.md",
-    },
-    {
-        "query": "Why is gradient accumulation useful during training?",
-        "expected_behavior": "answer",
-        "gold_source": "training.md",
-    },
-    {
-        "query": "How can I reduce GPU memory usage during training without reducing batch size?",
-        "expected_behavior": "answer",
-        "gold_source": "training.md",
-    },
-
-    # 3. SAFETY / HALLUCINATION — System MUST Abstain
-    {
-        "query": "How do I initialize the GalaxyTransformer model?",
-        "expected_behavior": "abstain",
-        "gold_source": None,
-    },
-    {
-        "query": "What does the force_gpu_burn flag do in TrainingArguments?",
-        "expected_behavior": "abstain",
-        "gold_source": None,
-    },
-    {
-        "query": "How do I enable quantum attention in BERT?",
-        "expected_behavior": "abstain",
-        "gold_source": None,
-    },
-    {
-        "query": "What does the auto_delete_dataset parameter do in Trainer?",
-        "expected_behavior": "abstain",
-        "gold_source": None,
-    },
-    {
-        "query": "How do I use BertForEntityLinking for named entity disambiguation?",
-        "expected_behavior": "abstain",
-        "gold_source": None,
-    },
-    {
-        "query": "How does Trainer.auto_shard_model() distribute layers across GPUs?",
-        "expected_behavior": "abstain",
-        "gold_source": None,
-    },
-    {
-        "query": "How do I configure the neural_cache parameter in GenerationConfig?",
-        "expected_behavior": "abstain",
-        "gold_source": None,
-    },
-
-    # 4. CORRECTIVE / EDGE CASES — Hard Retrieval
-    {
-        "query": "What deprecation warning is shown for the old Adam optimizer?",
-        "expected_behavior": "answer",
-        "gold_source": "optimizers.md",
-    },
-    {
-        "query": "What optimizer is recommended instead of the deprecated Adam implementation?",
-        "expected_behavior": "answer",
-        "gold_source": "optimizers.md",
-    },
-    {
-        "query": "How do I use BitsAndBytesConfig for 4-bit quantization?",
-        "expected_behavior": "answer",
-        "gold_source": "overview.md",
-    },
-    {
-        "query": "How do I enable mixed precision training with the Trainer API?",
-        "expected_behavior": "answer",
-        "gold_source": "trainer.md",
-    },
-
-    # 5. COMPLETENESS / SYNTHESIS — Multi-Document Answers
-    {
-        "query": "Summarize the steps required to fine-tune a model using the Trainer API.",
-        "expected_behavior": "answer",
-        "gold_source": None,
-    },
-    {
-        "query": "Explain the full preprocessing pipeline before model training.",
-        "expected_behavior": "answer",
-        "gold_source": None,
-    },
-    {
-        "query": "Describe how to load, fine-tune, and save a transformer model.",
-        "expected_behavior": "answer",
-        "gold_source": None,
-    },
+# Nodi da tracciare per il timing — allineati con i nodi del grafo
+TIMING_KEYS = [
+    "retrieve", "grade_documents", "transform_query",
+    "corrective_retriever", "discard_knowledge", "generate"
 ]
 
 
 def calculate_recall_at_k(docs: list, gold_source: str) -> float:
-    """Recall@k — il gold source è tra i documenti forniti?"""
+    """
+    Recall@k — il gold source è tra i documenti forniti?
+    Controlla sia il path completo che il nome file.
+    """
     if not gold_source or not docs:
         return 0.0
     target = gold_source.lower()
@@ -154,7 +35,7 @@ def calculate_recall_at_k(docs: list, gold_source: str) -> float:
 
 
 def compute_decision_metrics(y_expected: list, y_actual: list) -> dict:
-    """Metriche di routing separate per classe"""
+    """Metriche di routing separate per classe."""
     answer_indices  = [i for i, e in enumerate(y_expected) if e == 1]
     abstain_indices = [i for i, e in enumerate(y_expected) if e == 0]
 
@@ -180,39 +61,41 @@ def compute_decision_metrics(y_expected: list, y_actual: list) -> dict:
 def run_benchmark():
     print("=" * 55)
     print(" AVVIO VALUTAZIONE CRAG")
-    print(f" Test set: {len(test_dataset)} query")
+    print(f" Test set: {len(monai_dataset)} query")
     print("=" * 55)
 
-    with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
+    # Build del grafo senza stampare i log di caricamento
+    with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
         app = build_crag_graph()
 
     results = []
     y_expected = []
     y_actual = []
-    total = len(test_dataset)
+    total = len(monai_dataset)
 
-    # Nodi da tracciare per il timing
-    timing_keys = ["retrieve", "grade_documents", "transform_query",
-                   "corrective_retriever", "discard_knowledge", "generate"]
-
-    for i, item in enumerate(test_dataset[:1]):
+    for i, item in enumerate(monai_dataset):
         q = item["query"]
         behavior_type = item["expected_behavior"]
         gold_src = item.get("gold_source")
 
         print(f" [{i+1:02d}/{total}] {q[:60]}...")
 
-        # Esecuzione + latenza
+        # --- Esecuzione CRAG ---
         start = time.perf_counter()
-        with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
-            final_state = app.invoke({"question": q})
+        with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
+            try:
+                final_state = app.invoke({"question": q})
+            except Exception as e:
+                print(f"    Errore CRAG: {e}")
+                final_state = {}
         latency = time.perf_counter() - start
 
         gen_ans = final_state.get("generation", "")
         k_in = final_state.get("k_in", [])
         k_ex = final_state.get("k_ex", [])
         valid_docs = k_in + k_ex
-        all_docs = final_state.get("documents", [])
+        # final_documents = accumulatore di tutti i doc visti (pre-grading)
+        all_docs = final_state.get("final_documents", [])
         crag_action = final_state.get("crag_action", "unknown")
         node_timings = final_state.get("node_timings", {})
 
@@ -222,29 +105,31 @@ def run_benchmark():
         should_answer = (behavior_type == "answer")
 
         y_expected.append(1 if should_answer else 0)
-        y_actual.append(1 if did_answer else 0)
+        y_actual.append(1 if did_answer   else 0)
 
         status = "✅" if (did_answer == should_answer) else "❌"
-        print(f"        {status} Expected [{behavior_type}] -> Got [{'answer' if did_answer else 'abstain'}]"
+        print(f"        {status} Expected [{behavior_type}] -> " f"Got [{'answer' if did_answer else 'abstain'}]"
               f" | Action: {crag_action} | {latency:.1f}s")
 
-        # Recall@k pre-grading (retriever puro) e post-grading (dopo grading+refinement)
+        # Recall@k
+        # Pre-grading:  tutti i doc recuperati dal retriever (final_documents)
+        # Post-grading: solo i doc validati dal grader (k_in + k_ex)
         rec_pre  = calculate_recall_at_k(all_docs,   gold_src) if gold_src else np.nan
         rec_post = calculate_recall_at_k(valid_docs, gold_src) if gold_src else np.nan
 
-        # LLM Judge — solo se ha risposto
+        # --- LLM Judge (solo se ha risposto) ---
         faith_val = None
-        rel_val   = None
+        rel_val = None
         reasoning = None
 
         if did_answer:
             context_text = "\n\n".join(d.page_content for d in valid_docs)[:6000]
-            with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
-                scores = evaluate_with_llm(q, context_text, gen_ans)
+            scores    = evaluate_with_llm(q, context_text, gen_ans)
             faith_val = scores.faithfulness
             rel_val   = scores.answer_relevance
             reasoning = scores.reasoning
 
+        # --- Costruzione riga risultato ---
         row = {
             "Query": q,
             "Expected": behavior_type,
@@ -260,8 +145,7 @@ def run_benchmark():
             "Answer": gen_ans
         }
 
-        # Aggiungi colonne timing per ogni nodo
-        for key in timing_keys:
+        for key in TIMING_KEYS:
             row[f"t_{key}"] = round(node_timings.get(key, 0.0), 2)
 
         results.append(row)
@@ -269,7 +153,7 @@ def run_benchmark():
     print("\nElaborazione completata.")
 
     # Report finale
-    df      = pd.DataFrame(results)
+    df = pd.DataFrame(results)
     metrics = compute_decision_metrics(y_expected, y_actual)
 
     avg_faith    = df["Faithfulness"].mean()
@@ -292,22 +176,24 @@ def run_benchmark():
     print(f"  Avg Faithfulness  : {avg_faith:.2f}/5  (anti-allucinazione)")
     print(f"  Avg Relevance     : {avg_rel:.2f}/5  (utilità)")
     print("--- QUALITÀ DEL RETRIEVAL ---")
-    print(f"  Recall@k Pre      : {avg_rec_pre:.2f}  (retriever puro)")
-    print(f"  Recall@k Post     : {avg_rec_post:.2f}  (dopo grading+refinement)")
-
+    print(f"  Recall@k Pre      : {avg_rec_pre:.2f}  (retriever puro, su final_documents)")
+    print(f"  Recall@k Post     : {avg_rec_post:.2f}  (dopo grading+refinement, su k_in+k_ex)")
     print("--- LATENZA ---")
     print(f"  Avg Totale        : {avg_latency:.2f}s")
-    for key in timing_keys:
-        col = f"t_{key}"
-        if col in df.columns:
-            avg_t = df[col].mean()
-            if avg_t > 0.01:  # Mostra solo nodi che hanno girato
-                pct = (avg_t / avg_latency * 100) if avg_latency > 0 else 0
-                print(f"  Avg {key:<22s}: {avg_t:.2f}s  ({pct:.0f}%)")
+
+    for key in TIMING_KEYS:
+        col   = f"t_{key}"
+        avg_t = df[col].mean() if col in df.columns else 0.0
+        if avg_t > 0.01:
+            pct = (avg_t / avg_latency * 100) if avg_latency > 0 else 0
+            print(f"  Avg {key:<22s}: {avg_t:.2f}s  ({pct:.0f}%)")
     print("=" * 55)
 
-    df.to_csv("crag_metrics.csv", index = False)
-    print("\nRisultati salvati in: crag_metrics.csv")
+    os.makedirs("evaluation", exist_ok = True)
+    output_path = "evaluation/crag_metrics.csv"
+    df.to_csv(output_path, index = False)
+    print(f"\nRisultati salvati in: {output_path}")
+
 
 if __name__ == "__main__":
     run_benchmark()

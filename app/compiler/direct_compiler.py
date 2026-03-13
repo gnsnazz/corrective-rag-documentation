@@ -1,5 +1,5 @@
 from app.crag.models import llm
-from app.crag.prompts import generate_prompt
+from app.crag.prompts import bug_generate_prompt
 from langchain_core.output_parsers import StrOutputParser
 from app.template_parser import ParsedTemplate, TemplateSection
 from app.recomposer import CompiledDocument, CompiledSection
@@ -42,7 +42,7 @@ def process_structured_compliance(template: ParsedTemplate, template_fields: lis
 
     compiled_sections = []
     fields_list_str = "\n".join(f"- {f}" for f in template_fields)
-    chain = generate_prompt | llm | StrOutputParser()
+    chain = bug_generate_prompt | llm | StrOutputParser()
 
     for i, record in enumerate(data_records):
         record_id, record_title, source_url = extract_record_meta(record, i)
