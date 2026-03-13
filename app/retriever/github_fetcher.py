@@ -9,37 +9,35 @@ load_dotenv()
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_API = "https://api.github.com"
 
+RECORD_ID_KEYS    = ("bug_id", "id", "issue_id")
+RECORD_TITLE_KEYS = ("title", "name", "summary")
+RECORD_URL_KEYS   = ("url", "html_url", "link")
+
+
 def get_headers() -> dict:
-    """
-    Genera gli header, includendo l'autenticazione se disponibile.
-    """
+    """Genera gli header HTTP, includendo l'autenticazione se disponibile."""
     headers = {"Accept": "application/vnd.github.v3+json"}
     if GITHUB_TOKEN:
         headers["Authorization"] = f"token {GITHUB_TOKEN}"
     return headers
 
-def fetch_issue_comments(owner: str, repo: str, issue_number: int) -> list[dict]:
-    """
-    Scarica i commenti di una issue.
-    """
-    url = f"{GITHUB_API}/repos/{owner}/{repo}/issues/{issue_number}/comments"
 
+def fetch_issue_comments(owner: str, repo: str, issue_number: int) -> list[dict]:
+    """Scarica i commenti di una issue."""
+    url = f"{GITHUB_API}/repos/{owner}/{repo}/issues/{issue_number}/comments"
     response = requests.get(url, headers = get_headers())
 
     if response.status_code != 200:
         return []
 
-    comments_raw = response.json()
-
-    comments = []
-    for c in comments_raw:
-        comments.append({
+    return [
+        {
             "author": c.get("user", {}).get("login", "unknown"),
             "body": c.get("body", ""),
             "created_at": c.get("created_at")
-        })
-
-    return comments
+        }
+        for c in response.json()
+    ]
 
 
 def fetch_bugs(owner: str, repo: str, state: str = "all", label: str = "bug", per_page: int = 100) -> list[dict]:
@@ -65,24 +63,23 @@ def fetch_bugs(owner: str, repo: str, state: str = "all", label: str = "bug", pe
         response = requests.get(url, params = params, headers = get_headers())
 
         if response.status_code != 200:
-            print(f"Errore API: {response.status_code} - {response.text}")
+            print(f"  Errore API pagina {page}: {response.status_code} - {response.text}")
+            print(f"  Interrotto a pagina {page}, recuperati {len(bugs)} bug finora.")
             break
 
         raw_issues = response.json()
-
         if not raw_issues:
             break
 
         for issue in raw_issues:
-
             # GitHub restituisce anche le PR → filtra
             if "pull_request" in issue:
                 continue
 
             issue_number = issue["number"]
-
             comments = fetch_issue_comments(owner, repo, issue_number)
 
+            # Ordine delle chiavi fisso e documentato — allineato con RECORD_*_KEYS
             bug = {
                 "bug_id": f"#{issue_number}",
                 "title": issue["title"],
@@ -90,15 +87,14 @@ def fetch_bugs(owner: str, repo: str, state: str = "all", label: str = "bug", pe
                 "state": issue["state"],
                 "created_at": issue["created_at"],
                 "closed_at": issue.get("closed_at"),
-                "labels": [l["name"] for l in issue.get("labels", [])],
+                "labels": [lbl["name"] for lbl in issue.get("labels", [])],
                 "url": issue["html_url"],
                 "author": issue.get("user", {}).get("login", "unknown"),
                 "comments": comments
             }
-
             bugs.append(bug)
 
-        print(f"Pagina {page} scaricata ({len(raw_issues)} issues)")
+        print(f"  Pagina {page} scaricata ({len(raw_issues)} issues grezze)")
         page += 1
 
     print(f"\nTotale bug trovati: {len(bugs)}")
@@ -108,11 +104,9 @@ def fetch_bugs(owner: str, repo: str, state: str = "all", label: str = "bug", pe
 def save_bugs(bugs: list[dict], output_path: str) -> None:
     """Salva la lista di bug in un file JSON."""
     Path(output_path).parent.mkdir(parents = True, exist_ok = True)
-
     with open(output_path, "w", encoding = "utf-8") as f:
         json.dump(bugs, f, indent = 4, ensure_ascii = False)
-
-    print(f"Salvati in: {output_path}")
+    print(f"Salvati {len(bugs)} bug in: {output_path}")
 
 
 def load_bugs(json_path: str) -> list[dict]:
@@ -135,7 +129,6 @@ def load_bugs(json_path: str) -> list[dict]:
 def format_bug_as_context(bug: dict) -> str:
     """
     Formatta il record in testo strutturato per l'LLM.
-    Appiattisce le strutture annidate per ridurre il rumore.
     """
     lines = []
     for key, value in bug.items():
@@ -152,7 +145,7 @@ def format_bug_as_context(bug: dict) -> str:
 
     return "\n".join(lines)
 
-if __name__ == "__main__":
 
+if __name__ == "__main__":
     bugs = fetch_bugs(REPO_OWNER, REPO_NAME, state = "all")
     save_bugs(bugs, GITHUB_BUGS_PATH)
