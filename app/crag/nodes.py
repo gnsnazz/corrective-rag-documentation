@@ -4,7 +4,7 @@ from langchain_core.output_parsers import StrOutputParser
 from app.config import  ABSTENTION_MSG, K_CORRECTIVE, STRIP_SIMILARITY_THRESHOLD,format_source
 from app.crag.state import GraphState, CragDocument
 from app.crag.models import llm, llm_grader, embeddings, vectorstore, retriever, strip_splitter
-from app.crag.prompts import GRADER_SYSTEM_MSG, rewrite_prompt, generate_prompt, requirements_generate_prompt
+from app.crag.prompts import GRADER_SYSTEM_MSG, rewrite_prompt, extract_table_prompt, qa_prompt
 
 # --- NODI ---
 def retrieve(state: GraphState):
@@ -248,8 +248,12 @@ def generate(state: GraphState):
     """
     print("\n   [5] ANSWER GENERATOR")
 
-    # Unione delle conoscenze per il generatore
-    all_docs = state.k_in + state.k_ex
+    if state.crag_action == "correct":
+        all_docs = state.k_in
+    elif state.crag_action == "incorrect":
+        all_docs = state.k_ex
+    else:  # ambiguous o best-effort
+        all_docs = state.k_in + state.k_ex
 
     # Controllo finale
     # Se il Grader (Evaluator) ha scartato tutto, non si delega all'LLM.
@@ -275,13 +279,13 @@ def generate(state: GraphState):
 
     if state.template_fields:
         fields_list_str = "\n".join([f"- {f}" for f in state.template_fields])
-        chain = requirements_generate_prompt | llm | StrOutputParser()
+        chain = extract_table_prompt | llm | StrOutputParser()
         response = chain.invoke({
             "template_fields": fields_list_str,
             "context": context
         })
     else:
-        chain = generate_prompt | llm | StrOutputParser()
+        chain = qa_prompt  | llm | StrOutputParser()
         response = chain.invoke({
             "context": context,
             "question": state.question
