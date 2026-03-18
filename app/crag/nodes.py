@@ -248,8 +248,12 @@ def generate(state: GraphState):
     """
     print("\n   [5] ANSWER GENERATOR")
 
-    # Unione delle conoscenze per il generatore
-    all_docs = state.k_in + state.k_ex
+    if state.crag_action == "correct":
+        all_docs = state.k_in
+    elif state.crag_action == "incorrect":
+        all_docs = state.k_ex
+    else:  # ambiguous o best-effort
+        all_docs = state.k_in + state.k_ex
 
     # Controllo finale
     # Se il Grader (Evaluator) ha scartato tutto, non si delega all'LLM.

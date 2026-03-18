@@ -44,6 +44,11 @@ def run_table_benchmark():
     generated_table = section.generated_content
     context = section.context or "No context available"
 
+    # Field Coverage — percentuale di campi compilati con valore diverso da N/A
+    total_rows = sum(1 for line in generated_table.split("\n") if "|" in line and "---" not in line) - 1
+    na_rows = sum(1 for line in generated_table.split("\n") if "|" in line and "N/A" in line and "---" not in line)
+    field_coverage = round((total_rows - na_rows) / total_rows * 100, 1) if total_rows > 0 else 0.0
+
     print(f"  Tabella generata in {latency:.1f}s")
     print(f"  Righe stimate: {generated_table.count(chr(10))}")
     print(f"  Context disponibile: {'Sì' if section.context else 'No (fallback)'}")
@@ -56,7 +61,8 @@ def run_table_benchmark():
     print("=" * 55)
     print(f"  Completeness  : {scores.completeness}/5")
     print(f"  Correctness   : {scores.correctness}/5")
-    print(f"  Hallucination : {scores.hallucination}/5  (5=nessuna allucinazione)")
+    print(f"  Hallucination : {scores.hallucination}/5")
+    print(f"  Field Coverage: {field_coverage}%")
     print(f"  Latency       : {latency:.2f}s")
     print(f"\n  Reasoning: {scores.reasoning}")
     print("=" * 55)
@@ -67,6 +73,7 @@ def run_table_benchmark():
         "Completeness":     scores.completeness,
         "Correctness":      scores.correctness,
         "Hallucination":    scores.hallucination,
+        "Field_coverage":   field_coverage,
         "Latency_Seconds":  round(latency, 2),
         "Reasoning":        scores.reasoning,
         "Generated_Table":  generated_table
