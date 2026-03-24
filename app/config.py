@@ -15,9 +15,20 @@ OUTPUT_DIR = str(BASE_DIR / "reports")
 GITHUB_BUGS_PATH = str(BASE_DIR / "data" / "github_bugs.json")
 
 # --- TEMPLATES ---
-TEMPLATES_DIR = str(BASE_DIR / "data" / "templates")
 BUG_FIXES_TEMPLATE = str(BASE_DIR / "templates" / "techdoc" / "62304" / "bug-fixes-documentation-list.md")
 REQUIREMENTS_TEMPLATE = str(BASE_DIR / "templates" / "techdoc" / "62304" / "software-requirements-list.md")
+SOFTWARE_LIST_TEMPLATE = str(BASE_DIR / "templates" / "qms" / "software_validation" / "software-list.md")
+
+TEMPLATES = {
+    "requirements": {
+        "path": REQUIREMENTS_TEMPLATE,
+        "query_suffix": "software requirements features capabilities dependencies configuration specifications"
+    },
+    "software-list": {
+        "path": SOFTWARE_LIST_TEMPLATE,
+        "query_suffix": "software components versions dependencies validation manufacturer"
+    }
+}
 
 # --- INGESTION ---
 ALLOWED_EXTENSIONS = [".py", ".md", ".txt", ".yaml", ".yml", ".cfg", ".toml"]
@@ -33,11 +44,8 @@ def format_source(path: str) -> str:
     return os.path.basename(path) if path else "unknown"
 
 # --- PARAMETRI CRAG ---
-MAX_RETRIES = 2
+MAX_RETRIES = 1
 K_CORRECTIVE = 10
+K_BASE = 10
 
-STRIP_SIMILARITY_THRESHOLD = 0.50
-
-# --- SOGLIE CRAG ---
-CONFIDENCE_UPPER = 0.55
-CONFIDENCE_LOWER = 0.30
+STRIP_SIMILARITY_THRESHOLD = 0.45

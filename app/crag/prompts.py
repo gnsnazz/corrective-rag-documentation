@@ -101,7 +101,10 @@ STRICT OUTPUT RULES:
 2. FORMAT: Output ONLY a single Markdown table with exactly TWO columns: "Field" and "Value".
 3. ONE ROW PER FIELD: The generated table must have exactly one row for every field listed in the REQUIRED FIELDS.
 4. MISSING DATA: If the specific data for a field is not explicitly found in the context, write exactly "N/A" in the Value column. Do not deduce or guess.
-5. NO EXTRA TEXT: Do not generate introductions, summaries, or any text outside the Markdown table.
+5. SYNTHESIS FIELDS: For fields that require narrative or descriptive content 
+   (e.g. descriptions, summaries, analyses, explanations), write a concise 
+   technical summary (2-3 sentences max) based on the context, rather than copying the raw text verbatim.
+6. NO EXTRA TEXT: Do not generate introductions, summaries, or any text outside the Markdown table.
 
 If the <context> is completely empty, return EXACTLY this string and nothing else:
 "{abstention_msg}"
