@@ -1,4 +1,3 @@
-from app.crag.graph import build_crag_graph
 from app.template_parser import ParsedTemplate, TemplateSection
 from app.recomposer import CompiledDocument, CompiledSection
 from app.config import format_source, ABSTENTION_MSG
@@ -6,15 +5,15 @@ from app.config import format_source, ABSTENTION_MSG
 # Sezione fittizia: non parsata dal template, è la tabella completa generata dall'LLM.
 CRAG_SECTION_TYPE = "ready_markdown"
 
-def build_requirements_query(repo_name: str, template_title: str) -> str:
+def build_query(repo_name: str, template_title: str, query_suffix: str) -> str:
     """
     Costruisce la macro-query per recuperare tutti i chunk rilevanti dal vector store per un dato template.
     """
-    return (f"{repo_name} {template_title} "
-            f"software requirements features capabilities dependencies configuration specifications")
+    return f"{repo_name} {template_title} {query_suffix}"
 
 
-def process_crag_compliance(template: ParsedTemplate, template_fields: list[str], repo_name: str) -> CompiledDocument:
+def process_crag_compliance(template: ParsedTemplate, template_fields: list[str], repo_name: str, query_suffix: str) -> CompiledDocument:
+    from app.crag.graph import build_crag_graph
     """
     Compila il template con approccio single-pass:
     1. Una sola macro-query al CRAG per recuperare tutti i chunk rilevanti
@@ -24,7 +23,7 @@ def process_crag_compliance(template: ParsedTemplate, template_fields: list[str]
     print(f"Avvio Compilazione CRAG Single-Pass - {template.title}")
 
     app = build_crag_graph()
-    query = build_requirements_query(repo_name ,template.title)
+    query = build_query(repo_name, template.title, query_suffix)
     print(f"Query: {query}")
 
     generation = ""

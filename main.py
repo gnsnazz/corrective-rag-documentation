@@ -1,13 +1,13 @@
 import sys
-from app.config import BUG_FIXES_TEMPLATE, REQUIREMENTS_TEMPLATE, GITHUB_BUGS_PATH, OUTPUT_DIR, REPO_NAME
+from app.config import BUG_FIXES_TEMPLATE, GITHUB_BUGS_PATH, OUTPUT_DIR, REPO_NAME, TEMPLATES
 from app.template_parser import parse_template, extract_template_fields
-from app.retriever.github_fetcher import load_bugs
-from app.compiler.direct_compiler import process_structured_compliance
-from app.compiler.crag_compiler import process_crag_compliance
 from app.recomposer import recompose_document, save_document, get_output_path
 
 
 def run_bug_fixes():
+    from app.retriever.github_fetcher import load_bugs
+    from app.compiler.direct_compiler import process_structured_compliance
+
     print("Bug Fixes (Dati Strutturati)")
 
     template = parse_template(BUG_FIXES_TEMPLATE)
@@ -31,17 +31,22 @@ def run_bug_fixes():
     print("\nCompilazione completata con successo!")
 
 
-def run_requirements():
-    print("Software Requirements (CRAG)")
+def run_crag(command):
+    from app.compiler.crag_compiler import process_crag_compliance
 
-    template = parse_template(REQUIREMENTS_TEMPLATE)
+    config = TEMPLATES[command]
+    template = parse_template(config["path"])
     template_fields = extract_template_fields(template)
 
     if not template_fields:
         print("Errore: Nessun campo estratto dal template.")
         return
 
-    compiled_document = process_crag_compliance(template, template_fields, repo_name = REPO_NAME)
+    compiled_document = process_crag_compliance(
+        template, template_fields,
+        repo_name = REPO_NAME,
+        query_suffix = config["query_suffix"]
+    )
 
     print("\nGenerazione report Markdown finale in corso...")
     final_markdown = recompose_document(compiled_document)
@@ -50,7 +55,6 @@ def run_requirements():
     save_document(final_markdown, output_path)
     print("\nCompilazione completata con successo!")
 
-
 def main():
     print("TEMPLATE COMPILER")
 
@@ -58,17 +62,18 @@ def main():
         print("Seleziona il caso:")
         print("  1 - Bug Fixes")
         print("  2 - Software Requirements")
+        print("  3 - Software List")
         command = input("Scelta: ").strip()
-        command = {"1": "bugs", "2": "requirements"}.get(command, command)
+        command = {"1": "bugs", "2": "requirements", "3": "software-list"}.get(command, command)
     else:
         command = sys.argv[1]
 
     if command == "bugs":
         run_bug_fixes()
-    elif command == "requirements":
-        run_requirements()
+    elif command in TEMPLATES:
+        run_crag(command)
     else:
-        print(f"Comando non valido: '{command}'")
+        print(f"Comando non riconosciuto: '{command}'")
 
 
 if __name__ == "__main__":
