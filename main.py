@@ -62,9 +62,8 @@ def main():
         print("Seleziona il caso:")
         print("  1 - Bug Fixes")
         print("  2 - Software Requirements")
-        print("  3 - Software List")
         command = input("Scelta: ").strip()
-        command = {"1": "bugs", "2": "requirements", "3": "software-list"}.get(command, command)
+        command = {"1": "bugs", "2": "requirements"}.get(command, command)
     else:
         command = sys.argv[1]
 
