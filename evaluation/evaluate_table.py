@@ -3,7 +3,7 @@ import contextlib
 import time
 import pandas as pd
 
-from app.config import REQUIREMENTS_TEMPLATE, REPO_NAME
+from app.config import REPO_NAME, TEMPLATES
 from app.template_parser import parse_template, extract_template_fields
 from app.compiler.crag_compiler import process_crag_compliance
 from evaluation.judge import evaluate_table
@@ -14,7 +14,10 @@ def run_table_benchmark():
     print(" AVVIO VALUTAZIONE TABELLA")
     print("=" * 55)
 
-    template = parse_template(REQUIREMENTS_TEMPLATE)
+    template_config = TEMPLATES["requirements"]
+    template = parse_template(template_config["path"])
+    query_suffix = template_config["query_suffix"]
+
     template_fields = extract_template_fields(template)
     print(f"Template: {template.title}")
     print(f"Campi: {template_fields}")
@@ -24,7 +27,7 @@ def run_table_benchmark():
 
     with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
         try:
-            compiled = process_crag_compliance(template, template_fields, repo_name = REPO_NAME)
+            compiled = process_crag_compliance(template, template_fields, repo_name = REPO_NAME, query_suffix = query_suffix)
         except Exception as e:
             print(f"Errore durante la compilazione CRAG: {e}")
             return
@@ -44,11 +47,6 @@ def run_table_benchmark():
     generated_table = section.generated_content
     context = section.context or "No context available"
 
-    # Field Coverage — percentuale di campi compilati con valore diverso da N/A
-    total_rows = sum(1 for line in generated_table.split("\n") if "|" in line and "---" not in line) - 1
-    na_rows = sum(1 for line in generated_table.split("\n") if "|" in line and "N/A" in line and "---" not in line)
-    field_coverage = round((total_rows - na_rows) / total_rows * 100, 1) if total_rows > 0 else 0.0
-
     print(f"  Tabella generata in {latency:.1f}s")
     print(f"  Righe stimate: {generated_table.count(chr(10))}")
     print(f"  Context disponibile: {'Sì' if section.context else 'No (fallback)'}")
@@ -62,7 +60,6 @@ def run_table_benchmark():
     print(f"  Completeness  : {scores.completeness}/5")
     print(f"  Correctness   : {scores.correctness}/5")
     print(f"  Hallucination : {scores.hallucination}/5")
-    print(f"  Field Coverage: {field_coverage}%")
     print(f"  Latency       : {latency:.2f}s")
     print(f"\n  Reasoning: {scores.reasoning}")
     print("=" * 55)
@@ -73,7 +70,6 @@ def run_table_benchmark():
         "Completeness":     scores.completeness,
         "Correctness":      scores.correctness,
         "Hallucination":    scores.hallucination,
-        "Field_coverage":   field_coverage,
         "Latency_Seconds":  round(latency, 2),
         "Reasoning":        scores.reasoning,
         "Generated_Table":  generated_table

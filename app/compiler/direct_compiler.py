@@ -1,4 +1,4 @@
-from app.crag.models import llm
+from app.crag.llm import llm
 from app.crag.prompts import bug_generate_prompt
 from langchain_core.output_parsers import StrOutputParser
 from app.template_parser import ParsedTemplate, TemplateSection

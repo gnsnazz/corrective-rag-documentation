@@ -7,8 +7,8 @@ from app.config import ABSTENTION_MSG
 from evaluation.datasets import monai_validation
 
 # Griglia di soglie da testare
-LOWER_VALUES = [0.15, 0.25, 0.35]
-UPPER_VALUES = [0.45, 0.55, 0.65, 0.75]
+LOWER_VALUES = [0.20, 0.30, 0.40]
+UPPER_VALUES = [0.50, 0.60, 0.70, 0.80]
 
 
 def test_threshold_pair(app, lower: float, upper: float) -> dict:

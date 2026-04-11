@@ -3,7 +3,8 @@ from langchain_core.output_parsers import StrOutputParser
 
 from app.config import  ABSTENTION_MSG, K_CORRECTIVE, STRIP_SIMILARITY_THRESHOLD,format_source
 from app.crag.state import GraphState, CragDocument
-from app.crag.models import llm, llm_grader, embeddings, vectorstore, retriever, strip_splitter
+from app.crag.llm import llm, llm_grader
+from app.crag.vectorstore import embeddings, vectorstore, retriever, strip_splitter
 from app.crag.prompts import GRADER_SYSTEM_MSG, rewrite_prompt, extract_table_prompt, qa_prompt
 
 # --- NODI ---
@@ -11,6 +12,7 @@ def retrieve(state: GraphState):
     print("\n   [1] BASE RETRIEVER")
     # Recupero iniziale
     raw_docs = retriever.invoke(state.question)
+    print(f"  Retrieved {len(raw_docs)} docs.")
 
     # Wrapping in CragDocument con metadata
     crag_docs = [
